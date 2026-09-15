@@ -27,8 +27,13 @@ import { AccessibleRoute } from '../types';
 type NavState = 'idle' | 'navigating' | 'paused' | 'completed';
 
 export const NavigationPage: React.FC = () => {
-  const { showToast, addAssistanceItem, updateNavigationContext } = useAssistant();
+  const { showToast, addAssistanceItem, updateNavigationContext, updateNavigationState, setCurrentFeature } = useAssistant();
   const { settings } = useAccessibility();
+
+  // Set current feature in unified context
+  useEffect(() => {
+    setCurrentFeature('navigation', '/navigation');
+  }, [setCurrentFeature]);
 
   // Navigation State Machine
   const [navState, setNavState] = useState<NavState>('idle');
@@ -82,12 +87,21 @@ export const NavigationPage: React.FC = () => {
   // Sync with Assistant Context whenever active waypoint or destination changes
   useEffect(() => {
     if (activeRoute && activeRoute.steps[activeStepIndex]) {
+      const step = activeRoute.steps[activeStepIndex];
+      updateNavigationState(
+        activeRoute.destination,
+        step.instruction,
+        {
+          stepFree: activeRoute.stepFree,
+          distanceRemaining: `${activeRoute.distanceMeters}m`,
+        }
+      );
       updateNavigationContext(
         activeRoute.destination,
-        activeRoute.steps[activeStepIndex].instruction
+        step.instruction
       );
     }
-  }, [activeRoute, activeStepIndex, updateNavigationContext]);
+  }, [activeRoute, activeStepIndex, updateNavigationContext, updateNavigationState]);
 
   // Clean up speech on unmount
   useEffect(() => {

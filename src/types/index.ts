@@ -90,6 +90,13 @@ export interface ChatMessage {
   confidence?: 'high' | 'medium' | 'low';
   safetyWarning?: string;
   suggestedFollowUps?: string[];
+  source?: 'gemini' | 'vision' | 'ocr' | 'navigation' | 'conversation' | 'fallback';
+  contextUsed?: {
+    vision?: boolean;
+    ocr?: boolean;
+    navigation?: boolean;
+    conversation?: boolean;
+  };
 }
 
 // OCR & Text Reader Types

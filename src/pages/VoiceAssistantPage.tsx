@@ -11,6 +11,12 @@ import {
   Radio,
   Server,
   AlertCircle,
+  Camera,
+  FileText,
+  Navigation,
+  ShieldAlert,
+  Trash2,
+  Sparkles,
 } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { AccessibleButton } from '../components/common/AccessibleButton';
@@ -18,15 +24,28 @@ import { VoiceWaveform } from '../components/common/VoiceWaveform';
 import { ConfidenceIndicator } from '../components/common/ConfidenceIndicator';
 import { speechService } from '../services/speechService';
 import { aiAssistantService } from '../services/aiAssistantService';
-import { apiService } from '../services/apiService';
+import { apiService, BackendVoiceContext } from '../services/apiService';
 import { audioFeedback } from '../services/audioFeedbackService';
 import { useAssistant } from '../context/AssistantContext';
 import { useAccessibility } from '../context/AccessibilityContext';
 import { VoiceState, ChatMessage } from '../types';
 
 export const VoiceAssistantPage: React.FC = () => {
-  const { showToast, addAssistanceItem, sharedContext, connectionStatus } = useAssistant();
+  const {
+    showToast,
+    addAssistanceItem,
+    sharedContext,
+    connectionStatus,
+    setCurrentFeature,
+    clearFeatureContext,
+    clearSessionContext,
+  } = useAssistant();
   const { settings } = useAccessibility();
+
+  // Mark current feature in assistant context
+  useEffect(() => {
+    setCurrentFeature('voice', '/voice');
+  }, [setCurrentFeature]);
 
   const [voiceState, setVoiceState] = useState<VoiceState>('idle');
   const [messages, setMessages] = useState<ChatMessage[]>(() => aiAssistantService.getInitialMessages());
@@ -118,22 +137,72 @@ export const VoiceAssistantPage: React.FC = () => {
     let aiAnswer = '';
     let confidenceLevel: 'high' | 'medium' | 'low' = 'high';
     let safetyWarning = false;
+    let source: ChatMessage['source'] = 'gemini';
+    let contextUsed: ChatMessage['contextUsed'] = undefined;
+    let followUps: string[] = [
+      'What can you do?',
+      'What should I be careful about?',
+      'Help me navigate',
+      'What is around me?',
+    ];
 
     try {
-      // Send to the Express Backend API with conversation history and cross-feature context
+      // Build full multimodal context package
       const conversationHistory = messages.map((m) => ({
         sender: m.sender,
         text: m.text,
       }));
 
+      const contextPackage: BackendVoiceContext = {
+        currentPage: 'voice',
+        currentFeature: 'voice',
+        sessionId: sharedContext.sessionId,
+        currentScene: sharedContext.vision?.description || sharedContext.lastSceneContext?.description || null,
+        lastOcrText: sharedContext.ocr?.text || sharedContext.lastOcrContext?.text || null,
+        activeRoute: sharedContext.navigation?.destination || sharedContext.activeNavigationContext?.destination || null,
+        vision: sharedContext.vision
+          ? {
+              description: sharedContext.vision.description,
+              detectedObjects: sharedContext.vision.detectedObjects,
+              confidence: sharedContext.vision.confidence,
+              confidenceLevel: sharedContext.vision.confidenceLevel,
+              riskDetected: sharedContext.vision.riskDetected,
+              safetyMessage: sharedContext.vision.safetyMessage,
+              timestamp: sharedContext.vision.capturedAt,
+            }
+          : undefined,
+        ocr: sharedContext.ocr
+          ? {
+              text: sharedContext.ocr.text,
+              detectedLanguage: sharedContext.ocr.detectedLanguage,
+              confidence: sharedContext.ocr.confidence,
+              confidenceLevel: sharedContext.ocr.confidenceLevel,
+              simplifiedText: sharedContext.ocr.simplifiedText,
+              translatedText: sharedContext.ocr.translatedText,
+              targetLanguage: sharedContext.ocr.targetLanguage,
+              timestamp: sharedContext.ocr.capturedAt,
+            }
+          : undefined,
+        navigation: sharedContext.navigation
+          ? {
+              destination: sharedContext.navigation.destination,
+              currentStep: sharedContext.navigation.currentStep,
+              stepFree: sharedContext.navigation.stepFree,
+              distanceRemaining: sharedContext.navigation.distanceRemaining,
+              timestamp: sharedContext.navigation.updatedAt,
+            }
+          : undefined,
+        safety: {
+          activeWarnings: sharedContext.safety.activeWarnings,
+          latestRisk: sharedContext.safety.latestRisk || undefined,
+          riskDetected: sharedContext.safety.riskDetected,
+          timestamp: sharedContext.safety.updatedAt || undefined,
+        },
+      };
+
       const backendResponse = await apiService.sendVoiceChat({
         text: queryText,
-        context: {
-          currentPage: 'voice',
-          currentScene: sharedContext.lastSceneContext?.description || null,
-          lastOcrText: sharedContext.lastOcrContext?.text || null,
-          activeRoute: sharedContext.activeNavigationContext?.destination || null,
-        },
+        context: contextPackage,
         accessibilityProfile: {
           textSize: settings.textSize,
           simplifiedMode: settings.simplifiedMode,
@@ -146,16 +215,22 @@ export const VoiceAssistantPage: React.FC = () => {
       aiAnswer = backendResponse.answer;
       confidenceLevel = backendResponse.confidenceLevel;
       safetyWarning = backendResponse.safetyWarning;
+      source = backendResponse.source;
+      contextUsed = backendResponse.contextUsed;
+      if (backendResponse.suggestedFollowUps && backendResponse.suggestedFollowUps.length > 0) {
+        followUps = backendResponse.suggestedFollowUps;
+      }
     } catch {
       // Backend unavailable or network error: fall back to local grounded engine
       const localResult = await aiAssistantService.processUserQuery(queryText, {
-        currentScene: sharedContext.lastSceneContext?.description,
-        lastOcrText: sharedContext.lastOcrContext?.text,
-        activeRoute: sharedContext.activeNavigationContext?.destination,
+        currentScene: sharedContext.vision?.description || sharedContext.lastSceneContext?.description,
+        lastOcrText: sharedContext.ocr?.text || sharedContext.lastOcrContext?.text,
+        activeRoute: sharedContext.navigation?.destination || sharedContext.activeNavigationContext?.destination,
       });
       aiAnswer = localResult.text;
       confidenceLevel = localResult.confidence || 'high';
       safetyWarning = Boolean(localResult.safetyWarning);
+      source = 'fallback';
     }
 
     const aiMsg: ChatMessage = {
@@ -164,15 +239,12 @@ export const VoiceAssistantPage: React.FC = () => {
       text: aiAnswer,
       timestamp: 'Just now',
       confidence: confidenceLevel,
+      source,
+      contextUsed,
       safetyWarning: safetyWarning
         ? 'Medium confidence. Please verify before moving.'
         : undefined,
-      suggestedFollowUps: [
-        "What can you do?",
-        "What should I be careful about?",
-        "Help me navigate",
-        "What is around me?",
-      ],
+      suggestedFollowUps: followUps,
     };
 
     setVoiceState('responding');
@@ -233,6 +305,26 @@ export const VoiceAssistantPage: React.FC = () => {
     setTimeout(() => setCopiedId(null), 2000);
   };
 
+  const hasActiveVision = Boolean(sharedContext.vision || sharedContext.lastSceneContext);
+  const hasActiveOcr = Boolean(sharedContext.ocr || sharedContext.lastOcrContext);
+  const hasActiveNav = Boolean(sharedContext.navigation || sharedContext.activeNavigationContext);
+
+  const getSourceBadge = (msgSource?: ChatMessage['source']) => {
+    switch (msgSource) {
+      case 'gemini':
+        return { label: 'Gemini Multimodal', color: 'text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-950/50 border-purple-200 dark:border-purple-800' };
+      case 'vision':
+        return { label: 'Vision Engine', color: 'text-cyan-600 dark:text-cyan-400 bg-cyan-50 dark:bg-cyan-950/50 border-cyan-200 dark:border-cyan-800' };
+      case 'ocr':
+        return { label: 'Sign & Text Reader', color: 'text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/50 border-amber-200 dark:border-amber-800' };
+      case 'navigation':
+        return { label: 'Navigation Route', color: 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/50 border-blue-200 dark:border-blue-800' };
+      case 'fallback':
+      default:
+        return { label: 'Deterministic Engine', color: 'text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700' };
+    }
+  };
+
   return (
     <PageContainer maxWidth="lg" className="space-y-6">
       {/* Top Banner */}
@@ -272,6 +364,79 @@ export const VoiceAssistantPage: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* Multimodal Active Context Banner */}
+      {(hasActiveVision || hasActiveOcr || hasActiveNav || sharedContext.safety.riskDetected) && (
+        <div className="p-3.5 rounded-2xl bg-gradient-to-r from-purple-50 via-slate-50 to-blue-50 dark:from-purple-950/40 dark:via-slate-900 dark:to-blue-950/40 border border-purple-200/80 dark:border-purple-800/80 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+              <Sparkles className="w-3.5 h-3.5 text-purple-600" />
+              Active Multimodal Context:
+            </span>
+
+            {hasActiveVision && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-cyan-100 dark:bg-cyan-950 text-cyan-800 dark:text-cyan-200 font-medium">
+                <Camera className="w-3 h-3" />
+                <span>Scene: {sharedContext.vision?.description ? `"${sharedContext.vision.description.slice(0, 24)}..."` : 'Observed'}</span>
+                <button
+                  type="button"
+                  onClick={() => clearFeatureContext('vision')}
+                  aria-label="Clear vision context"
+                  className="hover:text-red-500 ml-1"
+                >
+                  ×
+                </button>
+              </span>
+            )}
+
+            {hasActiveOcr && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-200 font-medium">
+                <FileText className="w-3 h-3" />
+                <span>Text: {sharedContext.ocr?.text ? `"${sharedContext.ocr.text.slice(0, 20)}..."` : 'Extracted'}</span>
+                <button
+                  type="button"
+                  onClick={() => clearFeatureContext('ocr')}
+                  aria-label="Clear OCR context"
+                  className="hover:text-red-500 ml-1"
+                >
+                  ×
+                </button>
+              </span>
+            )}
+
+            {hasActiveNav && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-200 font-medium">
+                <Navigation className="w-3 h-3" />
+                <span>To: {sharedContext.navigation?.destination || 'Active'}</span>
+                <button
+                  type="button"
+                  onClick={() => clearFeatureContext('navigation')}
+                  aria-label="Clear navigation context"
+                  className="hover:text-red-500 ml-1"
+                >
+                  ×
+                </button>
+              </span>
+            )}
+
+            {sharedContext.safety.riskDetected && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-200 font-bold">
+                <ShieldAlert className="w-3 h-3" />
+                <span>Hazard Flagged</span>
+              </span>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={clearSessionContext}
+            className="inline-flex items-center gap-1 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 font-medium whitespace-nowrap self-end sm:self-auto"
+          >
+            <Trash2 className="w-3 h-3" />
+            <span>Reset Context</span>
+          </button>
+        </div>
+      )}
 
       {/* Voice Interaction Central Stage */}
       <div className="rounded-3xl p-6 sm:p-8 bg-white dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-800 shadow-xl text-center space-y-6">
@@ -363,6 +528,7 @@ export const VoiceAssistantPage: React.FC = () => {
         <div className="space-y-3">
           {messages.map((msg) => {
             const isAI = msg.sender === 'assistant';
+            const sourceBadge = isAI ? getSourceBadge(msg.source) : null;
 
             return (
               <div
@@ -373,12 +539,18 @@ export const VoiceAssistantPage: React.FC = () => {
                     : 'bg-brand-50 dark:bg-brand-950/50 border-brand-200 dark:border-brand-800 text-brand-950 dark:text-brand-100 ml-4 sm:ml-12'
                 }`}
               >
-                <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
                       {isAI ? 'AccessAI' : 'You'}
                     </span>
                     <span className="text-xs text-slate-400">• {msg.timestamp}</span>
+
+                    {isAI && sourceBadge && (
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${sourceBadge.color}`}>
+                        {sourceBadge.label}
+                      </span>
+                    )}
                   </div>
 
                   {isAI && msg.confidence && (

@@ -35,8 +35,13 @@ import { useAccessibility } from '../context/AccessibilityContext';
 import { CameraScene } from '../types';
 
 export const CameraVisionPage: React.FC = () => {
-  const { showToast, addAssistanceItem, updateSceneContext } = useAssistant();
+  const { showToast, addAssistanceItem, updateSceneContext, updateVisionResult, setCurrentFeature } = useAssistant();
   const { settings } = useAccessibility();
+
+  // Set current feature
+  useEffect(() => {
+    setCurrentFeature('camera', '/camera');
+  }, [setCurrentFeature]);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -219,6 +224,13 @@ export const CameraVisionPage: React.FC = () => {
 
         setVisionResult(result);
         setAnalysisError(null);
+        updateVisionResult({
+          description: result.description,
+          objects: result.objects,
+          safety: result.safety,
+          confidence: result.confidence,
+          confidenceLevel: result.confidenceLevel,
+        });
         updateSceneContext(
           result.description,
           result.objects.map((o) => o.label)
@@ -257,7 +269,7 @@ export const CameraVisionPage: React.FC = () => {
         showToast('Analysis Error', errMsg, 'warning');
       }
     },
-    [capturedSnapshot, isCameraActive, selectedSampleScene, imageSourceDescription, settings, showToast, updateSceneContext, addAssistanceItem]
+    [capturedSnapshot, isCameraActive, selectedSampleScene, imageSourceDescription, settings, showToast, updateSceneContext, updateVisionResult, addAssistanceItem]
   );
 
   // Toggle Continuous Real-Time Auto-Scan

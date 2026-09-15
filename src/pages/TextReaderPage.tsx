@@ -53,8 +53,13 @@ const LANGUAGES: LanguageOption[] = [
 
 export const TextReaderPage: React.FC = () => {
   const navigate = useNavigate();
-  const { showToast, addAssistanceItem, updateOcrContext } = useAssistant();
+  const { showToast, addAssistanceItem, updateOcrContext, updateOcrResult, setCurrentFeature } = useAssistant();
   const { settings, setLanguage } = useAccessibility();
+
+  // Set current feature in unified context
+  useEffect(() => {
+    setCurrentFeature('reader', '/reader');
+  }, [setCurrentFeature]);
 
   // Camera stream state
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -206,6 +211,11 @@ export const TextReaderPage: React.FC = () => {
         });
 
         setOcrResult(result);
+        updateOcrResult(result.text, result.detectedLanguage, {
+          simplifiedText: result.simplifiedText,
+          confidence: result.confidence,
+          confidenceLevel: result.confidenceLevel,
+        });
         updateOcrContext(result.text, result.detectedLanguage);
         setPipelineStep('READY');
         audioFeedback.playSuccess();
@@ -249,7 +259,7 @@ export const TextReaderPage: React.FC = () => {
         setIsProcessing(false);
       }
     },
-    [imageLabel, settings, showToast, updateOcrContext, addAssistanceItem]
+    [imageLabel, settings, showToast, updateOcrContext, updateOcrResult, addAssistanceItem]
   );
 
   // 5. CAPTURE FROM CAMERA AND EXTRACT

@@ -3,198 +3,255 @@ import { VoiceChatRequest, VoiceChatResponse } from '../../types/voice.types.js'
 export class FallbackProvider {
   async generateResponse(request: VoiceChatRequest): Promise<VoiceChatResponse> {
     const rawText = request.text.toLowerCase().trim();
-    const isSimplified = request.accessibilityProfile.simplifiedMode;
-    const hasSceneContext = Boolean(request.context.currentScene);
-    const hasOcrContext = Boolean(request.context.lastOcrText);
-    const hasRouteContext = Boolean(request.context.activeRoute);
+    const isSimplified = Boolean(request.accessibilityProfile?.simplifiedMode);
 
-    // Cross-Feature Context Intent: Inquiries about recent OCR readings ("What was on the sign?", "What did it say?")
-    if (
-      (rawText.includes('sign') || rawText.includes('document') || rawText.includes('read') || rawText.includes('what did it say')) &&
-      hasOcrContext
-    ) {
-      return {
-        answer: isSimplified
-          ? `The recent document says: "${request.context.lastOcrText}".`
-          : `From your recent document scan, the extracted text was: "${request.context.lastOcrText}".`,
-        confidence: 0.94,
-        confidenceLevel: 'high',
-        safetyWarning: false,
-      };
+    // Multimodal context extraction
+    const vision = request.context?.vision;
+    const ocr = request.context?.ocr;
+    const navigation = request.context?.navigation;
+    const safety = request.context?.safety;
+
+    const sceneDesc = vision?.description || request.context?.currentScene || null;
+    const detectedObjects = vision?.detectedObjects || [];
+    const ocrText = ocr?.text || request.context?.lastOcrText || null;
+    const destination = navigation?.destination || request.context?.activeRoute || null;
+    const activeWarnings = safety?.activeWarnings || [];
+
+    const hasScene = Boolean(sceneDesc);
+    const hasOcr = Boolean(ocrText && ocrText.trim());
+    const hasRoute = Boolean(destination);
+
+    // Context tracking flags
+    let usedVision = false;
+    let usedOcr = false;
+    let usedNav = false;
+    const usedConvo = Boolean(request.conversation && request.conversation.length > 0);
+
+    // 1. Multimodal Combination: Door in Vision + Restricted/Staff Sign in OCR
+    const isDoorInquiry = rawText.includes('enter') || rawText.includes('door') || rawText.includes('go in') || rawText.includes('walk through');
+    if (isDoorInquiry && hasScene && hasOcr) {
+      const ocrUpper = (ocrText || '').toUpperCase();
+      usedVision = true;
+      usedOcr = true;
+
+      if (ocrUpper.includes('STAFF') || ocrUpper.includes('RESTRICTED') || ocrUpper.includes('NO ENTRY') || ocrUpper.includes('DO NOT ENTER') || ocrUpper.includes('PRIVATE')) {
+        return {
+          answer: isSimplified
+            ? `Door detected ahead, but the sign says "${ocrText}". Entry is restricted. Do not enter without permission.`
+            : `I observe a doorway in your camera feed, but the sign attached to it reads "${ocrText}". This indicates restricted access. Please verify your authorization before attempting to enter.`,
+          confidence: 0.94,
+          confidenceLevel: 'high',
+          safetyWarning: true,
+          source: 'fallback',
+          contextUsed: { vision: true, ocr: true, navigation: false, conversation: usedConvo },
+          suggestedFollowUps: ['Find another accessible entrance', 'Read the sign again', 'Ask for staff assistance'],
+        };
+      } else {
+        return {
+          answer: isSimplified
+            ? `Door observed ahead. The sign reads: "${ocrText}". Check if it is accessible before opening.`
+            : `A doorway is visible ahead, and the sign reads: "${ocrText}". Please verify the door handle or automatic opening switch before opening.`,
+          confidence: 0.91,
+          confidenceLevel: 'high',
+          safetyWarning: false,
+          source: 'fallback',
+          contextUsed: { vision: true, ocr: true, navigation: false, conversation: usedConvo },
+          suggestedFollowUps: ['Is there a handle or automatic button?', 'Where does this door lead?'],
+        };
+      }
     }
 
-    // Cross-Feature Context Intent: Inquiries about active route ("Where are we going?", "What is the route?")
-    if (
-      (rawText.includes('where are we going') || rawText.includes('current route') || rawText.includes('next step') || rawText.includes('destination')) &&
-      hasRouteContext
-    ) {
+    // 2. OCR Inquiries ("What does this sign say?", "Where should I go?" after sign, "What did it say?", "What does this mean?")
+    const isOcrInquiry =
+      rawText.includes('sign') ||
+      rawText.includes('document') ||
+      rawText.includes('read') ||
+      rawText.includes('what did it say') ||
+      rawText.includes('what does this mean') ||
+      rawText.includes('what does that mean') ||
+      rawText.includes('what does it mean') ||
+      rawText.includes('what does this say') ||
+      rawText.includes('what is written') ||
+      ((rawText.includes('where should i go') || rawText.includes('which way')) && hasOcr);
+
+    if (isOcrInquiry && hasOcr) {
+      usedOcr = true;
+      if (rawText.includes('where should i go') || rawText.includes('which way')) {
+        return {
+          answer: isSimplified
+            ? `Based on the sign ("${ocrText}"), follow the direction indicated on it.`
+            : `Based on your recent document scan reading "${ocrText}", please follow the directional indicators shown on the sign, and confirm step-free access if needed.`,
+          confidence: 0.93,
+          confidenceLevel: 'high',
+          safetyWarning: false,
+          source: 'fallback',
+          contextUsed: { vision: false, ocr: true, navigation: hasRoute, conversation: usedConvo },
+          suggestedFollowUps: ['Read the full text aloud', 'Translate this text', 'Start navigation'],
+        };
+      }
+
+      const simplifiedSnippet = ocr?.simplifiedText || ocrText;
       return {
         answer: isSimplified
-          ? `You are navigating to: ${request.context.activeRoute}. Follow the step-free waypoints.`
-          : `Your active accessible route is set to: ${request.context.activeRoute}. Follow the tactile paving and spoken waypoint guidance.`,
+          ? `The sign text says: "${simplifiedSnippet}".`
+          : `From your recent document scan, the text reads: "${ocrText}".`,
         confidence: 0.95,
         confidenceLevel: 'high',
         safetyWarning: false,
+        source: 'fallback',
+        contextUsed: { vision: false, ocr: true, navigation: false, conversation: usedConvo },
+        suggestedFollowUps: ['Explain this simply', 'Translate to Tamil', 'Translate to Hindi'],
       };
     }
 
-    // Intent 3: Visual surroundings ("What is around me?" / "What do you see?" / "What did you see?")
-    // CRITICAL: Grounded in scene context.
+    // 3. Navigation Inquiries ("Where are we going?", "What is the route?", "Next step?")
+    if (
+      (rawText.includes('where are we going') || rawText.includes('current route') || rawText.includes('next step') || rawText.includes('destination') || rawText.includes('where do i go')) &&
+      hasRoute
+    ) {
+      usedNav = true;
+      const stepMsg = navigation?.currentStep ? ` Current instruction: ${navigation.currentStep}.` : '';
+      return {
+        answer: isSimplified
+          ? `Navigating to: ${destination}.${stepMsg} Follow the step-free path.`
+          : `Your active accessible route is set to: ${destination}.${stepMsg} Follow the tactile paving and spoken waypoint guidance.`,
+        confidence: 0.95,
+        confidenceLevel: 'high',
+        safetyWarning: false,
+        source: 'fallback',
+        contextUsed: { vision: hasScene, ocr: false, navigation: true, conversation: usedConvo },
+        suggestedFollowUps: ['What is the next step?', 'Is this route step-free?', 'Pause navigation'],
+      };
+    }
+
+    // 4. Surroundings / Visual Scene ("What is around me?" / "What do you see?" / "Describe surroundings")
     if (
       rawText.includes('what is around me') ||
       rawText.includes("what's around me") ||
       rawText.includes('what do you see') ||
       rawText.includes('what did you see') ||
       rawText.includes('look around') ||
-      rawText.includes('describe surroundings')
+      rawText.includes('describe surroundings') ||
+      rawText.includes('what is in front of me') ||
+      rawText.includes("what's in front of me")
     ) {
-      if (!hasSceneContext) {
+      if (!hasScene) {
         return {
           answer: isSimplified
-            ? 'I need a camera image or scene information to describe your surroundings.'
-            : 'I need a camera image or scene information to describe your surroundings. Please open the Camera page to begin a visual scan.',
+            ? 'I need a camera image or scene information to describe your surroundings. Please open Camera.'
+            : 'I need a camera image or scene information to describe your surroundings. Please open the Camera view to capture a frame.',
           confidence: 0.9,
           confidenceLevel: 'high',
           safetyWarning: false,
+          source: 'fallback',
+          contextUsed: { vision: false, ocr: false, navigation: false, conversation: usedConvo },
+          suggestedFollowUps: ['Open camera scan', 'Check accessibility settings'],
         };
       }
 
-      // If scene context exists (e.g. from camera)
+      usedVision = true;
+      const objectsList = detectedObjects.length > 0 ? ` Detected items: ${detectedObjects.join(', ')}.` : '';
       return {
         answer: isSimplified
-          ? `Recent view: ${request.context.currentScene}. Doorway ahead, chair on right, person nearby.`
-          : `Based on your recent camera scan (${request.context.currentScene}), I observed an accessible pathway, a doorway ahead, and seating on your right.`,
-        confidence: 0.91,
+          ? `Recent view: ${sceneDesc}.${objectsList}`
+          : `Based on your recent camera scan (${sceneDesc}), I observed an accessible pathway.${objectsList}`,
+        confidence: 0.92,
         confidenceLevel: 'high',
         safetyWarning: false,
+        source: 'fallback',
+        contextUsed: { vision: true, ocr: hasOcr, navigation: hasRoute, conversation: usedConvo },
+        suggestedFollowUps: ['Is there anything I should be careful about?', 'How far is the doorway?', 'Read any text in view'],
       };
     }
 
-    // Intent 4: Safety caution ("What should I be careful about?")
+    // 5. Safety & Obstacle inquiries ("Is there anything I should be careful about?", "Is that safe?")
     if (
       rawText.includes('careful') ||
       rawText.includes('obstacle') ||
       rawText.includes('hazard') ||
       rawText.includes('danger') ||
-      rawText.includes('watch out')
+      rawText.includes('watch out') ||
+      rawText.includes('is that safe') ||
+      rawText.includes('is it safe')
     ) {
+      usedVision = hasScene;
+      const riskMsg = vision?.safetyMessage || (activeWarnings.length > 0 ? activeWarnings.join('; ') : null);
+
+      if (riskMsg || vision?.riskDetected) {
+        return {
+          answer: isSimplified
+            ? `Caution: ${riskMsg || 'Obstacle or hazard reported ahead'}. Please verify with your cane or foot before stepping.`
+            : `Caution: ${riskMsg || 'Potential hazard detected in your path'}. Please verify your footing and surroundings carefully before moving.`,
+          confidence: 0.78,
+          confidenceLevel: 'medium',
+          safetyWarning: true,
+          source: 'fallback',
+          contextUsed: { vision: hasScene, ocr: false, navigation: false, conversation: usedConvo },
+          suggestedFollowUps: ['Describe the hazard in detail', 'Find a safer path', 'Check step-free route'],
+        };
+      }
+
       return {
         answer: isSimplified
-          ? 'There may be an obstacle ahead. Please check before moving.'
-          : 'There may be an obstacle near the center of your path approximately 1.5 meters ahead. Please verify before moving.',
-        confidence: 0.72,
+          ? 'No major hazards detected in the latest frame. Still, always verify your footing before moving.'
+          : 'No immediate high-severity hazards were flagged in your recent frame, but I cannot guarantee a 100% hazard-free surface. Please exercise caution and verify before proceeding.',
+        confidence: 0.82,
         confidenceLevel: 'medium',
-        safetyWarning: true,
+        safetyWarning: false,
+        source: 'fallback',
+        contextUsed: { vision: hasScene, ocr: false, navigation: false, conversation: usedConvo },
+        suggestedFollowUps: ['Scan camera again', 'Check next navigation step'],
       };
     }
 
-    // Intent 5: Doors / Exits ("Where is the door?")
-    if (
-      rawText.includes('where is the door') ||
-      rawText.includes('find the door') ||
-      rawText.includes('where is the exit') ||
-      rawText.includes('where is the entrance')
-    ) {
-      if (!hasSceneContext) {
+    // 6. Conversational Follow-up: "How far is it?"
+    if (rawText.includes('how far') || rawText.includes('distance')) {
+      if (hasRoute) {
         return {
           answer: isSimplified
-            ? 'Please turn on the camera so I can look for doors.'
-            : 'I need camera input to locate doors in your physical environment. Please switch to the Camera view to scan the area.',
-          confidence: 0.85,
+            ? `Destination is ${navigation?.distanceRemaining || 'nearby'}. Keep following waypoints.`
+            : `Your active route to ${destination} is approximately ${navigation?.distanceRemaining || 'nearby'}. Continue following spoken steps.`,
+          confidence: 0.9,
           confidenceLevel: 'high',
           safetyWarning: false,
+          source: 'fallback',
+          contextUsed: { vision: false, ocr: false, navigation: true, conversation: true },
+          suggestedFollowUps: ['What is the next step?'],
         };
       }
-      return {
-        answer: isSimplified
-          ? 'Doorway is straight ahead about 3 meters.'
-          : 'An accessible automatic doorway is located directly ahead, approximately 3 meters away.',
-        confidence: 0.91,
-        confidenceLevel: 'high',
-        safetyWarning: false,
-      };
-    }
 
-    // Intent 6: Description ("Can you describe this?" / "Can you explain this?")
-    if (
-      rawText.includes('describe this') ||
-      rawText.includes('explain this') ||
-      rawText.includes('tell me about this')
-    ) {
-      if (!hasSceneContext) {
+      if (hasScene) {
         return {
           answer: isSimplified
-            ? 'Please capture or share an image for me to describe.'
-            : 'Please provide a camera snapshot or select a scene so I can provide a detailed spatial description.',
-          confidence: 0.85,
-          confidenceLevel: 'high',
+            ? 'Key objects in your view appear roughly 2 to 4 meters ahead. Please verify as you approach.'
+            : 'Estimated distance to the primary objects observed in your frame is approximately 2 to 4 meters ahead. Please proceed cautiously as single camera frames have limited depth accuracy.',
+          confidence: 0.75,
+          confidenceLevel: 'medium',
           safetyWarning: false,
+          source: 'fallback',
+          contextUsed: { vision: true, ocr: false, navigation: false, conversation: true },
+          suggestedFollowUps: ['Is the path clear?'],
         };
       }
-      return {
-        answer: isSimplified
-          ? `This is ${request.context.currentScene} with multiple identifiable objects.`
-          : `This view features ${request.context.currentScene} with clearly demarcated pathways, accessible doors, and seating.`,
-        confidence: 0.89,
-        confidenceLevel: 'high',
-        safetyWarning: false,
-      };
-    }
-
-    // Intent 7: OCR reading ("Read this for me")
-    if (
-      rawText.includes('read this') ||
-      rawText.includes('read text') ||
-      rawText.includes('read sign') ||
-      rawText.includes('read document')
-    ) {
-      return {
-        answer: isSimplified
-          ? 'Open the Read tab to scan signs and documents with speech output.'
-          : 'You can use the Read Text feature to scan printed signs, documents, and labels with optical character recognition and multi-language translation.',
-        confidence: 0.92,
-        confidenceLevel: 'high',
-        safetyWarning: false,
-      };
-    }
-
-    // Intent 8: Navigation ("Help me navigate")
-    if (
-      rawText.includes('navigate') ||
-      rawText.includes('route') ||
-      rawText.includes('direction') ||
-      rawText.includes('where do i go')
-    ) {
-      return {
-        answer: isSimplified
-          ? 'Open the Navigate tab to calculate a step-free path with ramps and elevators.'
-          : 'I can help you navigate using step-free accessible routes avoiding stairs. Please open the Navigate page to choose your destination.',
-        confidence: 0.9,
-        confidenceLevel: 'high',
-        safetyWarning: false,
-      };
-    }
-
-    // Intent 9: Stairs / Elevators inquiry
-    if (rawText.includes('stair') || rawText.includes('step') || rawText.includes('elevator')) {
-      return {
-        answer: isSimplified
-          ? 'Stairs should be avoided. An accessible elevator is available.'
-          : 'AccessAI routes prioritize step-free paths using ramps and elevators. Staircases are flagged to be avoided for mobility safety.',
-        confidence: 0.94,
-        confidenceLevel: 'high',
-        safetyWarning: false,
-      };
     }
 
     // Default Fallback
     return {
       answer: isSimplified
-        ? `I heard: "${request.text}". You can ask about your surroundings, safety, reading text, or routes.`
-        : `I received your question: "${request.text}". AccessAI is active in deterministic assistance mode. You can ask what is around you, request a safety check, or ask for navigation guidance.`,
-      confidence: 0.8,
+        ? `I heard: "${request.text}". Ask me about what is in view, reading text, or step-free routes.`
+        : `I received your question: "${request.text}". AccessAI is operating in safe deterministic assistance mode. You can ask what is around you, request safety guidance, or check route directions.`,
+      confidence: 0.85,
       confidenceLevel: 'high',
       safetyWarning: false,
+      source: 'fallback',
+      contextUsed: {
+        vision: usedVision,
+        ocr: usedOcr,
+        navigation: usedNav,
+        conversation: usedConvo,
+      },
+      suggestedFollowUps: hasScene ? ['What do you see?', 'Is that safe?'] : hasOcr ? ['What does the sign say?'] : ['What is around me?', 'Help me navigate'],
     };
   }
 }
+

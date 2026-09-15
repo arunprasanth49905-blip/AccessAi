@@ -31,7 +31,7 @@ export class GeminiProvider implements IAssistantProvider, IVisionProvider {
   }
 
   /**
-   * Generates conversational assistance using Gemini, respecting accessibility profiles and visual grounding.
+   * Generates conversational assistance using Gemini, respecting accessibility profiles and multimodal context.
    */
   async generateVoiceResponse(request: VoiceChatRequest): Promise<VoiceChatResponse> {
     if (!this.isConfigured()) {
@@ -46,28 +46,73 @@ export class GeminiProvider implements IAssistantProvider, IVisionProvider {
     const isSimplified = Boolean(request.accessibilityProfile?.simplifiedMode);
     const language = request.accessibilityProfile?.language || 'en';
     const currentPage = request.context?.currentPage || 'voice';
-    const currentScene = request.context?.currentScene || null;
-    const lastOcrText = request.context?.lastOcrText || null;
-    const activeRoute = request.context?.activeRoute || null;
 
-    // Strict AccessAI system instructions with cross-feature context
+    // Multimodal context extraction with backwards compatibility
+    const vision = request.context?.vision;
+    const ocr = request.context?.ocr;
+    const navigation = request.context?.navigation;
+    const safety = request.context?.safety;
+
+    const sceneDesc = vision?.description || request.context?.currentScene || null;
+    const detectedObjects = vision?.detectedObjects || [];
+    const ocrText = ocr?.text || request.context?.lastOcrText || null;
+    const destination = navigation?.destination || request.context?.activeRoute || null;
+    const currentStep = navigation?.currentStep || null;
+    const activeWarnings = safety?.activeWarnings || [];
+    const riskDetected = Boolean(safety?.riskDetected || vision?.riskDetected);
+    const safetyMessage = safety?.latestRisk || vision?.safetyMessage || null;
+
+    // Freshness evaluation (5-minute TTL unless explicitly referenced by user question)
+    const now = Date.now();
+    const queryLower = request.text.toLowerCase();
+    const hasExplicitSignMention = queryLower.includes('sign') || queryLower.includes('text') || queryLower.includes('document') || queryLower.includes('read') || queryLower.includes('say') || queryLower.includes('written');
+    const hasExplicitSceneMention = queryLower.includes('see') || queryLower.includes('look') || queryLower.includes('around') || queryLower.includes('front') || queryLower.includes('ahead') || queryLower.includes('door') || queryLower.includes('room');
+    const hasExplicitNavMention = queryLower.includes('route') || queryLower.includes('where') || queryLower.includes('go') || queryLower.includes('destination') || queryLower.includes('step');
+    const hasFollowUpMention = queryLower.includes('that') || queryLower.includes('this') || queryLower.includes('it') || queryLower.includes('how far');
+
+    const isVisionFresh = vision?.timestamp ? (now - vision.timestamp < 300000) : Boolean(sceneDesc);
+    const isOcrFresh = ocr?.timestamp ? (now - ocr.timestamp < 300000) : Boolean(ocrText);
+    const isNavFresh = navigation?.timestamp ? (now - navigation.timestamp < 600000) : Boolean(destination);
+
+    const relevantScene = (isVisionFresh || hasExplicitSceneMention || hasFollowUpMention) ? sceneDesc : null;
+    const relevantOcr = (isOcrFresh || hasExplicitSignMention || hasFollowUpMention) ? ocrText : null;
+    const relevantNav = (isNavFresh || hasExplicitNavMention || hasFollowUpMention) ? destination : null;
+
+    // Strict AccessAI system instructions with cross-feature multimodal context
     const systemInstruction = `You are AccessAI, an intelligent multimodal accessibility companion designed to assist people with visual, hearing, and mobility disabilities.
 Core Principles:
-1. Grounding & Zero Visual Hallucination: If the user asks "What is around me?" or asks to describe surroundings/scene and currentScene is null, say: "I need a camera image or scene information to describe your surroundings." Never invent visual features, objects, or camera details.
-2. Cross-Feature Context:
-   - Recent Visual Scene: ${currentScene || 'None (no recent camera capture)'}
-   - Recent Document / Sign Extracted: ${lastOcrText || 'None (no recent document read)'}
-   - Active Navigation Route: ${activeRoute || 'None (not currently navigating)'}
-   If the user asks "What did you see?", "What was on that sign?", or asks about the route, use this context!
-3. Location & Navigation: Never pretend active GPS or live outdoor tracking exists unless explicitly provided.
-4. Safety: Never claim that a path or surface is 100% definitely safe. For any obstacle, hazard, or movement inquiry, communicate uncertainty and advise: "Please verify before moving."
-5. Profile Awareness:
-   - simplifiedMode: ${isSimplified ? 'YES. Use short, simple, plain language sentences with direct guidance.' : 'NO. Use natural, warm, conversational language.'}
-   - target language: ${language}
+1. Grounding & Zero Visual Hallucination:
+   - If the user asks "What is around me?" or asks to describe surroundings/scene and no visual scene is available in [ACTIVE CONTEXT], state clearly: "I need a camera image or scene information to describe your surroundings. Please open the Camera view to capture a frame."
+   - Never invent visual features, objects, distances, or camera details not supported by observed evidence.
+2. Cross-Feature Multimodal Reasoning:
+   - [ACTIVE CONTEXT]:
+     * Observed Visual Scene: ${relevantScene ? `${relevantScene} (Identified objects: ${detectedObjects.length > 0 ? detectedObjects.join(', ') : 'None specified'})` : 'None currently available'}
+     * Observed Text / Sign (OCR): ${relevantOcr ? `"${relevantOcr}" (Detected Language: ${ocr?.detectedLanguage || 'en'}${ocr?.simplifiedText ? `, Plain: ${ocr.simplifiedText}` : ''})` : 'None currently available'}
+     * Active Navigation Route: ${relevantNav ? `Destination: ${relevantNav}${currentStep ? `, Current Step: ${currentStep}` : ''}` : 'None currently active'}
+     * Safety Hazard State: ${riskDetected ? `Warning: ${safetyMessage || 'Potential hazard noted'}${activeWarnings.length > 0 ? ` [Warnings: ${activeWarnings.join('; ')}]` : ''}` : 'No immediate hazard reported'}
+   - Combine contexts intelligently:
+     * If the user asks about entering a door or walkway and a restricted sign (such as "STAFF ONLY" or "NO ENTRY") is in the OCR context: point out the door, highlight what the sign says, and advise caution regarding unauthorized access.
+     * If the user asks "Where should I go?" after reading a directional sign: use the text on the sign to guide their direction.
+     * If the user asks "How far is it?" or "Is that safe?" follow up on the entities discussed in the recent conversation turns.
+3. Safety: Never claim that a path or surface is 100% definitely safe or clear. For any obstacle, hazard, or movement inquiry, communicate uncertainty and advise: "Please verify before moving."
+4. Accessibility Profile:
+   - simplifiedMode: ${isSimplified ? 'YES. Use short, simple, plain language sentences with direct guidance. Avoid jargon.' : 'NO. Use natural, supportive, conversational tone.'}
+   - language: ${language} (CRITICAL: Output your response in this language code: ${language})
    - voiceGuidance: ${Boolean(request.accessibilityProfile?.voiceGuidance)}
    - current page: ${currentPage}
-6. Do not make medical, legal, or emergency decisions.
-7. Core workflow: SEE -> UNDERSTAND -> ASSIST -> RESPOND.`;
+5. Response Format:
+   Respond with a valid JSON object matching this schema:
+   {
+     "answer": "The spoken/text assistance message for the user",
+     "contextUsed": {
+       "vision": true or false,
+       "ocr": true or false,
+       "navigation": true or false,
+       "conversation": true or false
+     },
+     "suggestedFollowUps": ["Suggested follow-up question 1", "Suggested follow-up question 2"],
+     "safetyWarning": true or false
+   }`;
 
     try {
       console.log(`[AI] Gemini voice request started (model: ${config.GEMINI_MODEL})`);
@@ -87,7 +132,7 @@ Core Principles:
       });
       contents.push({
         role: 'model',
-        parts: [{ text: 'Understood. I am AccessAI, calibrated to provide grounded, safe accessibility assistance.' }],
+        parts: [{ text: '{"status":"ready","message":"Understood. I am AccessAI, calibrated to provide grounded multimodal accessibility assistance."}' }],
       });
 
       // Include recent conversation turns (up to last 6 turns)
@@ -110,8 +155,9 @@ Core Principles:
           model: modelToUse,
           contents,
           config: {
-            temperature: 0.3,
-            maxOutputTokens: 300,
+            temperature: 0.2,
+            maxOutputTokens: 450,
+            responseMimeType: 'application/json',
           },
         });
       };
@@ -128,12 +174,49 @@ Core Principles:
         }
       }
 
-      const answer = response.text?.trim();
+      const rawAnswer = response.text?.trim();
 
-      if (answer) {
+      if (rawAnswer) {
         console.log('[AI] Gemini voice request completed successfully');
+
+        // Parse JSON output
+        try {
+          const cleanJson = rawAnswer.replace(/^```json\s*/, '').replace(/\s*```$/, '').trim();
+          const parsed = JSON.parse(cleanJson);
+
+          if (parsed && typeof parsed.answer === 'string' && parsed.answer.trim()) {
+            const isSafetyRelated = Boolean(
+              parsed.safetyWarning ||
+              parsed.answer.toLowerCase().includes('caution') ||
+              parsed.answer.toLowerCase().includes('hazard') ||
+              parsed.answer.toLowerCase().includes('obstacle') ||
+              parsed.answer.toLowerCase().includes('verify before moving')
+            );
+
+            return {
+              answer: parsed.answer.trim(),
+              confidence: isSafetyRelated ? 0.82 : 0.95,
+              confidenceLevel: isSafetyRelated ? 'medium' : 'high',
+              safetyWarning: isSafetyRelated,
+              source: 'gemini',
+              contextUsed: {
+                vision: Boolean(parsed.contextUsed?.vision ?? Boolean(relevantScene)),
+                ocr: Boolean(parsed.contextUsed?.ocr ?? Boolean(relevantOcr)),
+                navigation: Boolean(parsed.contextUsed?.navigation ?? Boolean(relevantNav)),
+                conversation: Boolean(parsed.contextUsed?.conversation ?? (pastMessages.length > 0)),
+              },
+              suggestedFollowUps: Array.isArray(parsed.suggestedFollowUps)
+                ? parsed.suggestedFollowUps.slice(0, 3).map((s: unknown) => String(s))
+                : (relevantScene ? ['Is there anything I should be careful about?', 'How far is it?'] : ['What is around me?']),
+            };
+          }
+        } catch {
+          // If JSON parsing was not strict, fallback to raw text extraction
+          console.warn('[AI] Gemini output was not strict JSON, extracting response text directly');
+        }
+
         const lowerQ = request.text.toLowerCase();
-        const lowerA = answer.toLowerCase();
+        const lowerA = rawAnswer.toLowerCase();
         const isSafetyRelated =
           lowerQ.includes('careful') ||
           lowerQ.includes('obstacle') ||
@@ -142,10 +225,20 @@ Core Principles:
           lowerA.includes('caution');
 
         return {
-          answer,
-          confidence: isSafetyRelated ? 0.76 : 0.94,
+          answer: rawAnswer,
+          confidence: isSafetyRelated ? 0.78 : 0.94,
           confidenceLevel: isSafetyRelated ? 'medium' : 'high',
           safetyWarning: isSafetyRelated,
+          source: 'gemini',
+          contextUsed: {
+            vision: Boolean(relevantScene),
+            ocr: Boolean(relevantOcr),
+            navigation: Boolean(relevantNav),
+            conversation: pastMessages.length > 0,
+          },
+          suggestedFollowUps: relevantScene
+            ? ['Is the path clear?', 'Describe any obstacles']
+            : ['What is around me?', 'Read text in view'],
         };
       }
 

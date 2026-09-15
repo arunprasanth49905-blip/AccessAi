@@ -1,13 +1,50 @@
 // Centralized Frontend API Service for AccessAI
 
+export interface BackendVoiceContext {
+  currentPage?: string;
+  currentFeature?: 'camera' | 'reader' | 'voice' | 'navigation' | 'safety' | 'settings';
+  sessionId?: string;
+  currentScene?: string | null;
+  lastOcrText?: string | null;
+  activeRoute?: string | null;
+  vision?: {
+    description?: string;
+    detectedObjects?: string[];
+    confidence?: number;
+    confidenceLevel?: 'high' | 'medium' | 'low';
+    riskDetected?: boolean;
+    safetyMessage?: string;
+    timestamp?: number;
+  };
+  ocr?: {
+    text?: string;
+    detectedLanguage?: string;
+    confidence?: number;
+    confidenceLevel?: 'high' | 'medium' | 'low';
+    simplifiedText?: string;
+    translatedText?: string;
+    targetLanguage?: string;
+    timestamp?: number;
+  };
+  navigation?: {
+    destination?: string;
+    currentStep?: string;
+    stepFree?: boolean;
+    distanceRemaining?: string;
+    timestamp?: number;
+  };
+  safety?: {
+    activeWarnings?: string[];
+    latestRisk?: string;
+    riskDetected?: boolean;
+    timestamp?: number;
+  };
+  lastInteraction?: number;
+}
+
 export interface BackendVoiceRequest {
   text: string;
-  context?: {
-    currentPage?: string;
-    currentScene?: string | null;
-    lastOcrText?: string | null;
-    activeRoute?: string | null;
-  };
+  context?: BackendVoiceContext;
   accessibilityProfile?: {
     textSize?: 'small' | 'medium' | 'large' | 'xlarge';
     simplifiedMode?: boolean;
@@ -26,6 +63,14 @@ export interface BackendVoiceResponse {
   confidence: number;
   confidenceLevel: 'high' | 'medium' | 'low';
   safetyWarning: boolean;
+  source: 'gemini' | 'vision' | 'ocr' | 'navigation' | 'conversation' | 'fallback';
+  contextUsed?: {
+    vision?: boolean;
+    ocr?: boolean;
+    navigation?: boolean;
+    conversation?: boolean;
+  };
+  suggestedFollowUps?: string[];
 }
 
 export interface BackendHealthResponse {
