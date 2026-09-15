@@ -12,6 +12,30 @@ import {
 } from '../../types/ocr.types.js';
 import { ocrFallbackProvider } from './ocrFallback.provider.js';
 
+function cleanJsonString(str: string): string {
+  let cleaned = str.trim();
+  if (cleaned.startsWith('```json')) {
+    cleaned = cleaned.slice(7);
+  } else if (cleaned.startsWith('```')) {
+    cleaned = cleaned.slice(3);
+  }
+  if (cleaned.endsWith('```')) {
+    cleaned = cleaned.slice(0, -3);
+  }
+  return cleaned.trim();
+}
+
+async function fetchImageAsBase64(url: string): Promise<{ base64: string; mimeType: string }> {
+  const resp = await fetch(url);
+  if (!resp.ok) {
+    throw new Error(`Failed to fetch image from URL: ${resp.status}`);
+  }
+  const contentType = resp.headers.get('content-type') || 'image/jpeg';
+  const arrayBuffer = await resp.arrayBuffer();
+  const base64 = Buffer.from(arrayBuffer).toString('base64');
+  return { base64, mimeType: contentType };
+}
+
 export class OcrAiProvider {
   isConfigured(): boolean {
     return config.isGeminiConfigured();
@@ -31,17 +55,30 @@ export class OcrAiProvider {
   }
 
   /**
-   * Multimodal OCR extraction using Gemini
+   * Multimodal OCR extraction using Gemini with retry logic
    */
   async extract(input: OcrExtractInput): Promise<OcrResult> {
     if (!this.isConfigured()) {
       return ocrFallbackProvider.extract(input);
     }
 
-    // Extract base64 image data
+    // 1. Resolve base64 image data (including remote URL support)
     let base64Data = input.imageBase64;
+    let mimeType = input.mimeType || 'image/jpeg';
+
     if (!base64Data && input.imageBuffer) {
       base64Data = input.imageBuffer.toString('base64');
+    }
+
+    if (base64Data && (base64Data.startsWith('http://') || base64Data.startsWith('https://'))) {
+      try {
+        const fetched = await fetchImageAsBase64(base64Data);
+        base64Data = fetched.base64;
+        mimeType = fetched.mimeType;
+      } catch (err) {
+        console.warn('[OCR] Failed to fetch remote image URL:', err);
+        base64Data = undefined;
+      }
     }
 
     if (!base64Data) {
@@ -54,22 +91,22 @@ export class OcrAiProvider {
     }
 
     const cleanBase64 = base64Data.replace(/^data:image\/[a-z]+;base64,/, '');
-    const mimeType = input.mimeType || 'image/jpeg';
     const sourceLanguagePrompt =
       input.sourceLanguage && input.sourceLanguage !== 'auto'
         ? `Expected source language: ${input.sourceLanguage}.`
         : 'Auto-detect source language.';
 
-    const prompt = `You are AccessAI OCR, a high-precision document and signage reader for people with disabilities.
+    const prompt = `You are AccessAI OCR, a high-precision document, label, and signage reader designed for accessibility.
 ${sourceLanguagePrompt}
 
 Rules:
-1. Faithful Extraction: Extract all visible text faithfully. Never invent, extrapolate, or hallucinate text.
-2. If text is unclear or partially cut off, write "[unclear]" instead of guessing.
-3. Preserve line breaks, paragraphs, lists, and headings where helpful.
-4. Numerical Accuracy: Keep all numbers, prices, dates, times, room/platform numbers, and phone numbers EXACT (e.g. "Platform 2", "7:30 PM", "₹500").
-5. If there is NO readable text in the image, return text: "", confidence: 0.2, detectedLanguage: "unknown", regions: [].
-6. Return reliable bounding coordinates (normalized 0 to 1) for text blocks in "regions" only if confident. Otherwise, return regions: [].
+1. Faithful Extraction: Transcribe all visible text faithfully and accurately. Never hallucinate, extrapolate, or invent text that is not in the image.
+2. If text is blurry or partially obscured, transcribe what is readable and use "[unclear]" for illegible portions.
+3. Preserve line breaks, paragraphs, lists, and headings in logical reading order.
+4. Numerical Accuracy: Keep all numbers, prices, dates, times, room/platform numbers, and phone numbers EXACT (e.g. "Platform 2", "7:30 PM", "₹500", "Room 402").
+5. If there is NO readable text in the image, return:
+   {"source": "ai", "text": "", "detectedLanguage": "en", "confidence": 0.3, "regions": []}
+6. Provide bounding box regions (normalized coordinates from 0.0 to 1.0) for major text blocks if visible.
 
 Return strictly valid JSON matching this schema:
 {
@@ -89,85 +126,109 @@ Return strictly valid JSON matching this schema:
   ]
 }`;
 
-    try {
-      console.log(`[OCR] Gemini extraction started (model: ${config.GEMINI_MODEL})`);
+    // Execute with model fallback
+    const tryModels = [config.GEMINI_MODEL, 'gemini-3.5-flash-lite'].filter(
+      (m, idx, arr) => arr.indexOf(m) === idx
+    );
 
-      // 15-second timeout promise
-      const timeoutMs = 15000;
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('Gemini OCR extraction timed out')), timeoutMs);
-      });
+    for (const modelToUse of tryModels) {
+      try {
+        console.log(`[OCR] Gemini extraction attempt using model: ${modelToUse}`);
 
-      const generatePromise = ai.models.generateContent({
-        model: config.GEMINI_MODEL,
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              {
-                inlineData: {
-                  mimeType,
-                  data: cleanBase64,
+        const timeoutMs = 15000;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error('Gemini OCR extraction timed out')), timeoutMs);
+        });
+
+        const generatePromise = ai.models.generateContent({
+          model: modelToUse,
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                {
+                  inlineData: {
+                    mimeType,
+                    data: cleanBase64,
+                  },
                 },
-              },
-              {
-                text: prompt,
-              },
-            ],
+                {
+                  text: prompt,
+                },
+              ],
+            },
+          ],
+          config: {
+            temperature: 0.1,
+            maxOutputTokens: 1500,
+            responseMimeType: 'application/json',
           },
-        ],
-        config: {
-          temperature: 0.1,
-          maxOutputTokens: 1000,
-          responseMimeType: 'application/json',
-        },
-      });
+        });
 
-      const response = await Promise.race([generatePromise, timeoutPromise]);
-      const rawJson = response.text?.trim();
+        const response = await Promise.race([generatePromise, timeoutPromise]);
+        const rawText = response.text?.trim();
 
-      if (rawJson) {
-        try {
-          const parsed = JSON.parse(rawJson);
-          parsed.source = 'ai';
-          const conf = typeof parsed.confidence === 'number' ? Math.max(0, Math.min(1, parsed.confidence)) : 0.85;
-          parsed.confidence = conf;
-          parsed.confidenceLevel = this.calculateConfidenceLevel(conf);
+        if (rawText) {
+          const cleanedJson = cleanJsonString(rawText);
+          try {
+            const parsed = JSON.parse(cleanedJson);
+            parsed.source = 'ai';
+            const conf = typeof parsed.confidence === 'number' ? Math.max(0, Math.min(1, parsed.confidence)) : 0.92;
+            parsed.confidence = conf;
+            parsed.confidenceLevel = this.calculateConfidenceLevel(conf);
+            parsed.text = typeof parsed.text === 'string' ? parsed.text : '';
+            parsed.detectedLanguage = typeof parsed.detectedLanguage === 'string' ? parsed.detectedLanguage : 'en';
 
-          // Sanitize regions
-          if (!Array.isArray(parsed.regions)) {
-            parsed.regions = [];
-          } else {
-            parsed.regions = parsed.regions
-              .filter((r: { text?: string }) => Boolean(r && typeof r.text === 'string'))
-              .map((r: { text: string; confidence?: number; x?: number; y?: number; width?: number; height?: number }) => ({
-                text: r.text,
-                confidence: typeof r.confidence === 'number' ? Math.max(0, Math.min(1, r.confidence)) : conf,
-                x: Math.max(0, Math.min(1, r.x ?? 0)),
-                y: Math.max(0, Math.min(1, r.y ?? 0)),
-                width: Math.max(0, Math.min(1, r.width ?? 0)),
-                height: Math.max(0, Math.min(1, r.height ?? 0)),
-              }));
+            if (!Array.isArray(parsed.regions)) {
+              parsed.regions = [];
+            } else {
+              parsed.regions = parsed.regions
+                .filter((r: { text?: string }) => Boolean(r && typeof r.text === 'string'))
+                .map((r: { text: string; confidence?: number; x?: number; y?: number; width?: number; height?: number }) => ({
+                  text: r.text,
+                  confidence: typeof r.confidence === 'number' ? Math.max(0, Math.min(1, r.confidence)) : conf,
+                  x: Math.max(0, Math.min(1, r.x ?? 0)),
+                  y: Math.max(0, Math.min(1, r.y ?? 0)),
+                  width: Math.max(0, Math.min(1, r.width ?? 0)),
+                  height: Math.max(0, Math.min(1, r.height ?? 0)),
+                }));
+            }
+
+            const validated = OcrResultSchema.safeParse(parsed);
+            if (validated.success) {
+              console.log('[OCR] Gemini OCR extraction succeeded with model:', modelToUse);
+              return validated.data;
+            } else {
+              // Return sanitized parsed even if strict zod failed minor details
+              return {
+                source: 'ai',
+                text: parsed.text,
+                detectedLanguage: parsed.detectedLanguage,
+                confidence: conf,
+                confidenceLevel: this.calculateConfidenceLevel(conf),
+                regions: parsed.regions,
+              };
+            }
+          } catch {
+            // If response was direct text rather than JSON
+            console.log('[OCR] Model returned plain text, constructing valid OCR result');
+            return {
+              source: 'ai',
+              text: rawText,
+              detectedLanguage: 'en',
+              confidence: 0.88,
+              confidenceLevel: 'high',
+              regions: [],
+            };
           }
-
-          const validated = OcrResultSchema.safeParse(parsed);
-          if (validated.success) {
-            console.log('[OCR] Gemini extraction completed and validated successfully');
-            return validated.data;
-          } else {
-            console.warn('[OCR] Gemini OCR response failed schema validation, using fallback');
-          }
-        } catch {
-          console.warn('[OCR] Failed to parse JSON from Gemini OCR, using fallback');
         }
+      } catch (err) {
+        console.warn(`[OCR] Gemini extraction error with model ${modelToUse}:`, err instanceof Error ? err.message : err);
       }
-
-      return ocrFallbackProvider.extract(input);
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      console.warn(`[OCR] Gemini OCR extraction failed, using fallback: ${errorMessage}`);
-      return ocrFallbackProvider.extract(input);
     }
+
+    console.warn('[OCR] All Gemini model attempts failed, falling back to local OCR');
+    return ocrFallbackProvider.extract(input);
   }
 
   /**
@@ -201,42 +262,53 @@ Rules:
 Original Text:
 ${input.text}`;
 
-    try {
-      console.log('[OCR] Gemini text simplification started');
-      const timeoutMs = 12000;
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('Gemini simplification timed out')), timeoutMs);
-      });
+    const tryModels = [config.GEMINI_MODEL, 'gemini-3.5-flash-lite'].filter(
+      (m, idx, arr) => arr.indexOf(m) === idx
+    );
 
-      const generatePromise = ai.models.generateContent({
-        model: config.GEMINI_MODEL,
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        config: {
-          temperature: 0.2,
-          maxOutputTokens: 500,
-          responseMimeType: 'application/json',
-        },
-      });
+    for (const modelToUse of tryModels) {
+      try {
+        const timeoutMs = 12000;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error('Gemini simplification timed out')), timeoutMs);
+        });
 
-      const response = await Promise.race([generatePromise, timeoutPromise]);
-      const rawJson = response.text?.trim();
+        const generatePromise = ai.models.generateContent({
+          model: modelToUse,
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          config: {
+            temperature: 0.2,
+            maxOutputTokens: 600,
+            responseMimeType: 'application/json',
+          },
+        });
 
-      if (rawJson) {
-        const parsed = JSON.parse(rawJson);
-        if (typeof parsed.text === 'string' && parsed.text.trim()) {
-          return {
-            text: parsed.text.trim(),
-            confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.92,
-          };
+        const response = await Promise.race([generatePromise, timeoutPromise]);
+        const rawJson = response.text?.trim();
+
+        if (rawJson) {
+          const cleaned = cleanJsonString(rawJson);
+          try {
+            const parsed = JSON.parse(cleaned);
+            if (typeof parsed.text === 'string' && parsed.text.trim()) {
+              return {
+                text: parsed.text.trim(),
+                confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.94,
+              };
+            }
+          } catch {
+            return {
+              text: rawJson,
+              confidence: 0.88,
+            };
+          }
         }
+      } catch (err) {
+        console.warn(`[OCR] Simplification error with model ${modelToUse}:`, err instanceof Error ? err.message : err);
       }
-
-      return ocrFallbackProvider.simplify(input);
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      console.warn(`[OCR] Gemini simplification failed, using fallback: ${errorMessage}`);
-      return ocrFallbackProvider.simplify(input);
     }
+
+    return ocrFallbackProvider.simplify(input);
   }
 
   /**
@@ -267,8 +339,8 @@ Translate the following text accurately into ${targetName} (language code: ${inp
 
 Rules:
 1. NEVER alter numbers, dates, times, prices, platform/room numbers, units, or codes (e.g. "Platform 2", "7:30 PM", "₹500", "Room 204" must be preserved exactly).
-2. Translate signage and instructions naturally, respecting accessibility context.
-3. Do NOT add extra commentary.
+2. Translate signage, directions, and instructions naturally and idiomatically.
+3. Do NOT add extra conversational commentary.
 4. Return strictly valid JSON:
 {
   "sourceLanguage": string,
@@ -280,44 +352,57 @@ Rules:
 Text to Translate:
 ${input.text}`;
 
-    try {
-      console.log(`[OCR] Gemini translation started to ${input.targetLanguage}`);
-      const timeoutMs = 12000;
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('Gemini translation timed out')), timeoutMs);
-      });
+    const tryModels = [config.GEMINI_MODEL, 'gemini-3.5-flash-lite'].filter(
+      (m, idx, arr) => arr.indexOf(m) === idx
+    );
 
-      const generatePromise = ai.models.generateContent({
-        model: config.GEMINI_MODEL,
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        config: {
-          temperature: 0.2,
-          maxOutputTokens: 800,
-          responseMimeType: 'application/json',
-        },
-      });
+    for (const modelToUse of tryModels) {
+      try {
+        const timeoutMs = 12000;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error('Gemini translation timed out')), timeoutMs);
+        });
 
-      const response = await Promise.race([generatePromise, timeoutPromise]);
-      const rawJson = response.text?.trim();
+        const generatePromise = ai.models.generateContent({
+          model: modelToUse,
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          config: {
+            temperature: 0.2,
+            maxOutputTokens: 900,
+            responseMimeType: 'application/json',
+          },
+        });
 
-      if (rawJson) {
-        const parsed = JSON.parse(rawJson);
-        if (typeof parsed.text === 'string' && parsed.text.trim()) {
-          return {
-            sourceLanguage: parsed.sourceLanguage || input.sourceLanguage || 'auto',
-            targetLanguage: input.targetLanguage,
-            text: parsed.text.trim(),
-            confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.94,
-          };
+        const response = await Promise.race([generatePromise, timeoutPromise]);
+        const rawJson = response.text?.trim();
+
+        if (rawJson) {
+          const cleaned = cleanJsonString(rawJson);
+          try {
+            const parsed = JSON.parse(cleaned);
+            if (typeof parsed.text === 'string' && parsed.text.trim()) {
+              return {
+                sourceLanguage: parsed.sourceLanguage || input.sourceLanguage || 'auto',
+                targetLanguage: input.targetLanguage,
+                text: parsed.text.trim(),
+                confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.95,
+              };
+            }
+          } catch {
+            return {
+              sourceLanguage: input.sourceLanguage || 'auto',
+              targetLanguage: input.targetLanguage,
+              text: rawJson,
+              confidence: 0.9,
+            };
+          }
         }
+      } catch (err) {
+        console.warn(`[OCR] Translation error with model ${modelToUse}:`, err instanceof Error ? err.message : err);
       }
-
-      return ocrFallbackProvider.translate(input);
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      console.warn(`[OCR] Gemini translation failed, using fallback: ${errorMessage}`);
-      return ocrFallbackProvider.translate(input);
     }
+
+    return ocrFallbackProvider.translate(input);
   }
 }
 

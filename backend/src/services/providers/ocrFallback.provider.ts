@@ -89,7 +89,7 @@ export class OcrFallbackProvider {
   /**
    * Deterministic OCR extraction fallback
    */
-  async extract(input: OcrExtractInput): Promise<OcrResult> {
+  async extract(_input: OcrExtractInput): Promise<OcrResult> {
     // Select sample based on context or rotate
     const sample = DEMO_OCR_SAMPLES[0];
 

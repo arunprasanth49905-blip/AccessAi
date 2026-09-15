@@ -6,7 +6,7 @@ export const OCR_SAMPLES: OCRSample[] = [
     id: 'entrance-sign',
     title: 'Main Entrance & Accessibility Sign',
     category: 'Signage & Directions',
-    previewUrl: 'https://images.unsplash.com/photo-1541888946425-d0fbb186c5f7?auto=format&fit=crop&w=1200&q=80',
+    previewUrl: 'https://images.unsplash.com/photo-1572021335469-31706a17aaef?auto=format&fit=crop&w=1200&q=80',
     rawText: 'MAIN ENTRANCE\nOpen 9:00 AM – 6:00 PM\nReception →\nWheelchair Ramp on Left',
     segments: [
       {
