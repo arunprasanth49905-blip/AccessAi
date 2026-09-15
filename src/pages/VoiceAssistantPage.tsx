@@ -25,7 +25,7 @@ import { useAccessibility } from '../context/AccessibilityContext';
 import { VoiceState, ChatMessage } from '../types';
 
 export const VoiceAssistantPage: React.FC = () => {
-  const { showToast, addAssistanceItem } = useAssistant();
+  const { showToast, addAssistanceItem, sharedContext, connectionStatus } = useAssistant();
   const { settings } = useAccessibility();
 
   const [voiceState, setVoiceState] = useState<VoiceState>('idle');
@@ -134,7 +134,7 @@ export const VoiceAssistantPage: React.FC = () => {
     let safetyWarning = false;
 
     try {
-      // Send to the Express Backend API
+      // Send to the Express Backend API with conversation history and cross-feature context
       const conversationHistory = messages.map((m) => ({
         sender: m.sender,
         text: m.text,
@@ -144,7 +144,9 @@ export const VoiceAssistantPage: React.FC = () => {
         text: queryText,
         context: {
           currentPage: 'voice',
-          currentScene: null,
+          currentScene: sharedContext.lastSceneContext?.description || null,
+          lastOcrText: sharedContext.lastOcrContext?.text || null,
+          activeRoute: sharedContext.activeNavigationContext?.destination || null,
         },
         accessibilityProfile: {
           textSize: settings.textSize,
@@ -160,9 +162,13 @@ export const VoiceAssistantPage: React.FC = () => {
       safetyWarning = backendResponse.safetyWarning;
       setIsBackendConnected(true);
     } catch {
-      // Backend unavailable or network error: fall back to local deterministic engine
+      // Backend unavailable or network error: fall back to local grounded engine
       setIsBackendConnected(false);
-      const localResult = await aiAssistantService.processUserQuery(queryText);
+      const localResult = await aiAssistantService.processUserQuery(queryText, {
+        currentScene: sharedContext.lastSceneContext?.description,
+        lastOcrText: sharedContext.lastOcrContext?.text,
+        activeRoute: sharedContext.activeNavigationContext?.destination,
+      });
       aiAnswer = localResult.text;
       confidenceLevel = localResult.confidence || 'high';
       safetyWarning = Boolean(localResult.safetyWarning);
@@ -258,13 +264,15 @@ export const VoiceAssistantPage: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2.5">
-          {/* Subtle Backend Status indicator */}
+          {/* Real Backend Status indicator */}
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border shadow-sm bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800">
             <Server className="w-3.5 h-3.5 text-slate-500" />
-            {isBackendConnected === false ? (
-              <span className="text-amber-600 dark:text-amber-400 font-bold">Demo Mode</span>
+            {connectionStatus === 'connected' ? (
+              <span className="text-emerald-600 dark:text-emerald-400 font-bold">Gemini AI Active</span>
+            ) : connectionStatus === 'limited' ? (
+              <span className="text-amber-600 dark:text-amber-400 font-bold">Fallback Engine</span>
             ) : (
-              <span className="text-emerald-600 dark:text-emerald-400 font-bold">Live Backend</span>
+              <span className="text-rose-600 dark:text-rose-400 font-bold">Offline</span>
             )}
           </div>
 

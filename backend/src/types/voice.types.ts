@@ -12,6 +12,8 @@ export type AccessibilityProfileInput = z.infer<typeof AccessibilityProfileSchem
 export const VoiceContextSchema = z.object({
   currentPage: z.string().optional().default('voice'),
   currentScene: z.string().nullable().optional().default(null),
+  lastOcrText: z.string().nullable().optional().default(null),
+  activeRoute: z.string().nullable().optional().default(null),
 });
 
 export type VoiceContext = z.infer<typeof VoiceContextSchema>;

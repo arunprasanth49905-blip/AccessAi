@@ -50,7 +50,7 @@ type PipelineStep = 'IDLE' | 'CAPTURING' | 'UPLOADING' | 'OCR' | 'READY';
 
 export const TextReaderPage: React.FC = () => {
   const navigate = useNavigate();
-  const { showToast, addAssistanceItem } = useAssistant();
+  const { showToast, addAssistanceItem, updateOcrContext } = useAssistant();
   const { settings, setLanguage } = useAccessibility();
 
   // Camera stream state
@@ -189,6 +189,7 @@ export const TextReaderPage: React.FC = () => {
       });
 
       setOcrResult(result);
+      updateOcrContext(result.text, result.detectedLanguage);
       setPipelineStep('READY');
       audioFeedback.playSuccess();
 
@@ -206,11 +207,11 @@ export const TextReaderPage: React.FC = () => {
         showToast('No Text Found', 'No readable text was detected in this image.', 'info');
       }
     } catch (err) {
-      console.warn('OCR Analysis error, falling back to demo mode:', err);
+      console.warn('OCR Analysis error, falling back to deterministic OCR:', err);
       setPipelineStep('READY');
       setIsDemoMode(true);
 
-      // Fallback demo result
+      // Fallback deterministic result
       const fallbackResult: BackendOcrResult = {
         source: 'demo',
         text: OCR_SAMPLES[0].rawText,
@@ -220,7 +221,8 @@ export const TextReaderPage: React.FC = () => {
         regions: [],
       };
       setOcrResult(fallbackResult);
-      showToast('Demo OCR Ready', 'Network connection unavailable. Using deterministic Demo OCR.', 'info');
+      updateOcrContext(fallbackResult.text, fallbackResult.detectedLanguage);
+      showToast('Fallback OCR Ready', 'Network connection unavailable. Using deterministic local OCR.', 'info');
     } finally {
       setIsProcessing(false);
     }
@@ -423,9 +425,9 @@ export const TextReaderPage: React.FC = () => {
           <div className="px-3.5 py-1.5 rounded-full text-xs font-extrabold border shadow-sm flex items-center gap-1.5 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800">
             <Server className="w-3.5 h-3.5 text-slate-500" />
             {ocrResult.source === 'ai' && !isDemoMode ? (
-              <span className="text-brand-600 dark:text-brand-400">AI OCR</span>
+              <span className="text-brand-600 dark:text-brand-400">GEMINI OCR</span>
             ) : (
-              <span className="text-amber-600 dark:text-amber-400">DEMO OCR</span>
+              <span className="text-amber-600 dark:text-amber-400">FALLBACK OCR</span>
             )}
           </div>
         </div>

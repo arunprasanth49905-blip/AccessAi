@@ -23,7 +23,7 @@ import { AssistanceHistoryItem } from '../types';
 
 export const HistoryPage: React.FC = () => {
   const navigate = useNavigate();
-  const { recentAssistance, showToast } = useAssistant();
+  const { recentAssistance, showToast, clearHistory } = useAssistant();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<string>('all');
@@ -51,6 +51,13 @@ export const HistoryPage: React.FC = () => {
     setTimeout(() => setCopiedId(null), 2000);
   };
 
+  const handleClear = () => {
+    if (window.confirm('Are you sure you want to clear your local assistance history?')) {
+      clearHistory();
+      showToast('History Cleared', 'Local assistance logs have been reset.', 'info');
+    }
+  };
+
   const typeIcons = {
     scene: <Eye className="w-5 h-5 text-brand-600" />,
     ocr: <FileText className="w-5 h-5 text-emerald-600" />,
@@ -75,6 +82,16 @@ export const HistoryPage: React.FC = () => {
             Replay previous scene descriptions, review OCR documents, and continue conversations.
           </p>
         </div>
+
+        {recentAssistance.length > 0 && (
+          <AccessibleButton
+            variant="outline"
+            size="sm"
+            onClick={handleClear}
+          >
+            Clear History
+          </AccessibleButton>
+        )}
       </div>
 
       {/* Search & Category Filter Bar */}

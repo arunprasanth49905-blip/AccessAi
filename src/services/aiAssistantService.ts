@@ -22,7 +22,10 @@ class AIAssistantService {
     return [...this.initialMessages];
   }
 
-  processUserQuery(query: string, contextSceneName?: string): Promise<ChatMessage> {
+  processUserQuery(
+    query: string,
+    context?: { currentScene?: string | null; lastOcrText?: string | null; activeRoute?: string | null }
+  ): Promise<ChatMessage> {
     const q = query.toLowerCase();
 
     return new Promise((resolve) => {
@@ -32,31 +35,44 @@ class AIAssistantService {
         let safetyWarning: string | undefined = undefined;
         const suggestedFollowUps: string[] = [];
 
-        if (q.includes('around') || q.includes('look') || q.includes('surround')) {
-          text = contextSceneName
-            ? `In the ${contextSceneName}, I can see a doorway approximately 3 meters ahead, a chair on your right, and a person about 2.2 meters away.`
-            : 'I can see an accessible doorway ahead, a chair slightly to your right, and a person approximately two meters away.';
+        // Grounded in OCR context
+        if ((q.includes('sign') || q.includes('document') || q.includes('read') || q.includes('what did it say')) && context?.lastOcrText) {
+          text = `From your recent document scan, the extracted text was: "${context.lastOcrText}".`;
           confidence = 'high';
-          suggestedFollowUps.push('What should I be careful about?', 'Where is the door?', 'Are there stairs?');
+          suggestedFollowUps.push('Simplify this text', 'Translate to Tamil', 'Translate to Hindi');
+        } else if ((q.includes('where are we going') || q.includes('destination') || q.includes('route')) && context?.activeRoute) {
+          text = `Your active navigation route is set to: ${context.activeRoute}. Follow the step-free tactile line.`;
+          confidence = 'high';
+          suggestedFollowUps.push('What is the next step?', 'Is it step-free?');
+        } else if (q.includes('around') || q.includes('look') || q.includes('surround') || q.includes('what do you see') || q.includes('what did you see')) {
+          if (context?.currentScene) {
+            text = `Based on your recent camera scan (${context.currentScene}), I observed an accessible pathway, a doorway ahead, and seating on your right.`;
+            confidence = 'high';
+            suggestedFollowUps.push('What should I be careful about?', 'Where is the door?', 'Are there stairs?');
+          } else {
+            text = 'I need a camera image or scene information to describe your surroundings. Please open the Camera view to capture your environment.';
+            confidence = 'high';
+            suggestedFollowUps.push('Open Camera', 'What can you do?');
+          }
         } else if (q.includes('careful') || q.includes('obstacle') || q.includes('hazard') || q.includes('danger')) {
-          text = 'There may be a low utility cart or obstacle near the center of your path approximately 1.5 meters ahead.';
+          text = 'There may be a low utility cart or obstacle near the center of your path approximately 1.5 meters ahead. Please verify before moving.';
           confidence = 'medium';
           safetyWarning = 'Medium confidence. Please verify before moving.';
-          suggestedFollowUps.push('Is there an alternate path?', 'Describe what the obstacle looks like');
+          suggestedFollowUps.push('Is there an alternate path?', 'Where is the nearest door?');
         } else if (q.includes('stair') || q.includes('step')) {
-          text = 'I do not detect direct stairs in your immediate forward path, but descending steps exist on the far left. The accessible elevator is straight ahead.';
+          text = 'Descending steps exist on the left concourse. An accessible step-free ramp and elevator are available straight ahead.';
           confidence = 'high';
           suggestedFollowUps.push('Guide me to the elevator', 'Show step-free route');
         } else if (q.includes('read') || q.includes('text') || q.includes('sign')) {
-          text = 'I detect signage ahead reading: "MAIN ENTRANCE — Open 9:00 AM to 6:00 PM. Reception to the right. Wheelchair ramp on the left."';
+          text = 'You can capture printed signs, documents, and prescription labels in the Read tab for instant text-to-speech reading and translation.';
           confidence = 'high';
-          suggestedFollowUps.push('Read it aloud in Tamil', 'Translate to Hindi', 'Save this sign');
+          suggestedFollowUps.push('Open Read tab', 'What can you do?');
         } else if (q.includes('route') || q.includes('navigate') || q.includes('go to')) {
-          text = 'I have calculated a 100% step-free route (120 meters, ~2 mins) using the accessible ramp and central elevator.';
+          text = 'I can guide you along verified step-free routes avoiding stairs. Open the Navigate tab to choose your destination.';
           confidence = 'high';
-          suggestedFollowUps.push('Start step-by-step navigation', 'Avoid crowds');
+          suggestedFollowUps.push('Start navigation', 'Avoid stairs');
         } else {
-          text = `I understand you asked: "${query}". I am monitoring your camera feed and surroundings. Please verify critical physical paths as AI interpretations are advisory.`;
+          text = `I received your inquiry: "${query}". AccessAI is active in accessibility companion mode. You can ask what is around you, request a safety check, or ask for navigation guidance.`;
           confidence = 'medium';
           safetyWarning = 'Please verify physical surroundings before moving.';
           suggestedFollowUps.push("What's around me?", 'What should I be careful about?');

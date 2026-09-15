@@ -4,6 +4,7 @@ import { config } from './config/env.js';
 import voiceRoutes from './routes/voice.routes.js';
 import visionRoutes from './routes/vision.routes.js';
 import ocrRoutes from './routes/ocr.routes.js';
+import navigationRoutes from './routes/navigation.routes.js';
 import { errorHandler } from './middleware/error.middleware.js';
 
 export const app = express();
@@ -43,6 +44,9 @@ app.get('/api/health', (_req, res) => {
     ocr: {
       available: true,
     },
+    navigation: {
+      available: true,
+    },
   });
 });
 
@@ -50,6 +54,7 @@ app.get('/api/health', (_req, res) => {
 app.use('/api/voice', voiceRoutes);
 app.use('/api/vision', visionRoutes);
 app.use('/api/ocr', ocrRoutes);
+app.use('/api/navigation', navigationRoutes);
 
 // Error middleware
 app.use(errorHandler);

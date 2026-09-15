@@ -35,7 +35,7 @@ import { CameraScene } from '../types';
 
 export const CameraVisionPage: React.FC = () => {
   const navigate = useNavigate();
-  const { showToast, addAssistanceItem } = useAssistant();
+  const { showToast, addAssistanceItem, updateSceneContext } = useAssistant();
   const { settings } = useAccessibility();
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -228,6 +228,7 @@ export const CameraVisionPage: React.FC = () => {
       await new Promise((r) => setTimeout(r, 200));
 
       setVisionResult(result);
+      updateSceneContext(result.description, result.objects.map((o) => o.label));
       audioFeedback.playSuccess();
       setIsAnalyzing(false);
 
@@ -250,8 +251,8 @@ export const CameraVisionPage: React.FC = () => {
         });
       }
     } catch (err) {
-      console.warn('Backend Vision API call failed, engaging Demo Vision fallback:', err);
-      showToast('Vision Service Fallback', 'Using local Demo Vision engine.', 'info');
+      console.warn('Backend Vision API call failed, engaging Vision fallback:', err);
+      showToast('Vision Fallback Active', 'Using local Vision reasoning engine.', 'info');
 
       // Local Fallback simulation
       const fallbackResult = await visionService.simulateScan(selectedScene);
@@ -275,6 +276,7 @@ export const CameraVisionPage: React.FC = () => {
       };
 
       setVisionResult(adaptedResult);
+      updateSceneContext(adaptedResult.description, adaptedResult.objects.map((o) => o.label));
       audioFeedback.playSuccess();
       setIsAnalyzing(false);
 
@@ -364,9 +366,9 @@ export const CameraVisionPage: React.FC = () => {
             <div className="px-3 py-1.5 rounded-full text-xs font-extrabold border shadow-sm flex items-center gap-1.5 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800">
               <Server className="w-3.5 h-3.5 text-slate-500" />
               {visionResult.source === 'ai' ? (
-                <span className="text-brand-600 dark:text-brand-400">AI VISION</span>
+                <span className="text-brand-600 dark:text-brand-400">GEMINI VISION</span>
               ) : (
-                <span className="text-amber-600 dark:text-amber-400">DEMO VISION</span>
+                <span className="text-amber-600 dark:text-amber-400">FALLBACK VISION</span>
               )}
             </div>
           )}

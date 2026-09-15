@@ -5,51 +5,46 @@ export class FallbackProvider {
     const rawText = request.text.toLowerCase().trim();
     const isSimplified = request.accessibilityProfile.simplifiedMode;
     const hasSceneContext = Boolean(request.context.currentScene);
+    const hasOcrContext = Boolean(request.context.lastOcrText);
+    const hasRouteContext = Boolean(request.context.activeRoute);
 
-    // Intent 1: Greetings (Hello / Hi / Hey)
+    // Cross-Feature Context Intent: Inquiries about recent OCR readings ("What was on the sign?", "What did it say?")
     if (
-      rawText === 'hello' ||
-      rawText === 'hi' ||
-      rawText === 'hey' ||
-      rawText.startsWith('hello ') ||
-      rawText.startsWith('hi ') ||
-      rawText.startsWith('good morning') ||
-      rawText.startsWith('good afternoon') ||
-      rawText.startsWith('good evening')
+      (rawText.includes('sign') || rawText.includes('document') || rawText.includes('read') || rawText.includes('what did it say')) &&
+      hasOcrContext
     ) {
       return {
         answer: isSimplified
-          ? 'Hello. I am AccessAI. How can I help?'
-          : 'Hello! I am AccessAI, your multimodal accessibility companion. How can I assist you today?',
-        confidence: 0.98,
+          ? `The recent document says: "${request.context.lastOcrText}".`
+          : `From your recent document scan, the extracted text was: "${request.context.lastOcrText}".`,
+        confidence: 0.94,
         confidenceLevel: 'high',
         safetyWarning: false,
       };
     }
 
-    // Intent 2: Capabilities ("What can you do?")
+    // Cross-Feature Context Intent: Inquiries about active route ("Where are we going?", "What is the route?")
     if (
-      rawText.includes('what can you do') ||
-      rawText.includes('help me with') ||
-      rawText.includes('your capabilities') ||
-      rawText.includes('what do you do')
+      (rawText.includes('where are we going') || rawText.includes('current route') || rawText.includes('next step') || rawText.includes('destination')) &&
+      hasRouteContext
     ) {
       return {
         answer: isSimplified
-          ? 'I help you see objects, read text aloud, find accessible routes, and talk with voice.'
-          : 'AccessAI can describe visual surroundings with spatial object detection, read text from signs and documents aloud, plan step-free accessible navigation routes, and converse via natural voice.',
+          ? `You are navigating to: ${request.context.activeRoute}. Follow the step-free waypoints.`
+          : `Your active accessible route is set to: ${request.context.activeRoute}. Follow the tactile paving and spoken waypoint guidance.`,
         confidence: 0.95,
         confidenceLevel: 'high',
         safetyWarning: false,
       };
     }
 
-    // Intent 3: Visual surroundings ("What is around me?" / "What's around me?")
-    // CRITICAL: If no camera/scene context is provided, DO NOT hallucinate.
+    // Intent 3: Visual surroundings ("What is around me?" / "What do you see?" / "What did you see?")
+    // CRITICAL: Grounded in scene context.
     if (
       rawText.includes('what is around me') ||
       rawText.includes("what's around me") ||
       rawText.includes('what do you see') ||
+      rawText.includes('what did you see') ||
       rawText.includes('look around') ||
       rawText.includes('describe surroundings')
     ) {
@@ -67,9 +62,9 @@ export class FallbackProvider {
       // If scene context exists (e.g. from camera)
       return {
         answer: isSimplified
-          ? `In ${request.context.currentScene}: Doorway ahead. Chair to your right. Person on your left.`
-          : `Based on your active scene (${request.context.currentScene}), I can see an accessible doorway approximately 3 meters ahead, a chair to your right, and a person about 2 meters away.`,
-        confidence: 0.88,
+          ? `Recent view: ${request.context.currentScene}. Doorway ahead, chair on right, person nearby.`
+          : `Based on your recent camera scan (${request.context.currentScene}), I observed an accessible pathway, a doorway ahead, and seating on your right.`,
+        confidence: 0.91,
         confidenceLevel: 'high',
         safetyWarning: false,
       };

@@ -20,13 +20,16 @@ export const VoiceWaveform: React.FC<VoiceWaveformProps> = ({
     let interval: ReturnType<typeof setInterval> | null = null;
 
     if (state === 'listening') {
+      let phase = 0;
       interval = setInterval(() => {
+        phase += 0.25;
         setHeights(
           Array.from({ length: barCount }, (_, i) => {
             const center = barCount / 2;
             const distFromCenter = Math.abs(i - center) / center;
-            const weight = 1 - distFromCenter * 0.4;
-            return Math.floor((Math.random() * 65 + 20) * weight);
+            const weight = 1 - distFromCenter * 0.35;
+            const harmonic = Math.sin(i * 0.5 + phase * 2) * 20 + Math.cos(i * 0.75 + phase) * 15 + 40;
+            return Math.floor(Math.max(12, harmonic * weight));
           })
         );
       }, 90);
@@ -36,8 +39,8 @@ export const VoiceWaveform: React.FC<VoiceWaveformProps> = ({
         phase += 0.3;
         setHeights(
           Array.from({ length: barCount }, (_, i) => {
-            const wave = Math.sin(i * 0.4 + phase) * 30 + 40;
-            return Math.floor(Math.max(15, Math.min(85, wave + (Math.random() * 15 - 7))));
+            const wave = Math.sin(i * 0.4 + phase) * 32 + Math.cos(i * 0.2 + phase * 1.5) * 12 + 45;
+            return Math.floor(Math.max(15, Math.min(85, wave)));
           })
         );
       }, 80);

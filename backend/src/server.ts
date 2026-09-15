@@ -3,7 +3,7 @@ import { config } from './config/env.js';
 
 const PORT = config.PORT;
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`AccessAI backend server listening on http://localhost:${PORT}`);
   console.log(`Health check: http://localhost:${PORT}/api/health`);
   console.log(`Voice API:    http://localhost:${PORT}/api/voice/chat`);

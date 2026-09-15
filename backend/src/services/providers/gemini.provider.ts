@@ -47,21 +47,27 @@ export class GeminiProvider implements IAssistantProvider, IVisionProvider {
     const language = request.accessibilityProfile?.language || 'en';
     const currentPage = request.context?.currentPage || 'voice';
     const currentScene = request.context?.currentScene || null;
+    const lastOcrText = request.context?.lastOcrText || null;
+    const activeRoute = request.context?.activeRoute || null;
 
-    // Strict AccessAI system instructions
+    // Strict AccessAI system instructions with cross-feature context
     const systemInstruction = `You are AccessAI, an intelligent multimodal accessibility companion designed to assist people with visual, hearing, and mobility disabilities.
 Core Principles:
 1. Grounding & Zero Visual Hallucination: If the user asks "What is around me?" or asks to describe surroundings/scene and currentScene is null, say: "I need a camera image or scene information to describe your surroundings." Never invent visual features, objects, or camera details.
-2. Location & Navigation: Never pretend active GPS or live outdoor tracking exists unless explicitly provided.
-3. Safety: Never claim that a path or surface is 100% definitely safe. For any obstacle, hazard, or movement inquiry, communicate uncertainty and advise: "Please verify before moving."
-4. Profile Awareness:
+2. Cross-Feature Context:
+   - Recent Visual Scene: ${currentScene || 'None (no recent camera capture)'}
+   - Recent Document / Sign Extracted: ${lastOcrText || 'None (no recent document read)'}
+   - Active Navigation Route: ${activeRoute || 'None (not currently navigating)'}
+   If the user asks "What did you see?", "What was on that sign?", or asks about the route, use this context!
+3. Location & Navigation: Never pretend active GPS or live outdoor tracking exists unless explicitly provided.
+4. Safety: Never claim that a path or surface is 100% definitely safe. For any obstacle, hazard, or movement inquiry, communicate uncertainty and advise: "Please verify before moving."
+5. Profile Awareness:
    - simplifiedMode: ${isSimplified ? 'YES. Use short, simple, plain language sentences with direct guidance.' : 'NO. Use natural, warm, conversational language.'}
    - target language: ${language}
    - voiceGuidance: ${Boolean(request.accessibilityProfile?.voiceGuidance)}
    - current page: ${currentPage}
-   - current scene: ${currentScene || 'None (no visual input active)'}
-5. Do not make medical, legal, or emergency decisions.
-6. Core workflow: SEE -> UNDERSTAND -> ASSIST -> RESPOND.`;
+6. Do not make medical, legal, or emergency decisions.
+7. Core workflow: SEE -> UNDERSTAND -> ASSIST -> RESPOND.`;
 
     try {
       console.log(`[AI] Gemini voice request started (model: ${config.GEMINI_MODEL})`);
@@ -72,18 +78,36 @@ Core Principles:
         setTimeout(() => reject(new Error('Gemini voice request timed out')), timeoutMs);
       });
 
+      // Build multi-turn conversational contents
+      const contents: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> = [];
+
+      contents.push({
+        role: 'user',
+        parts: [{ text: `${systemInstruction}\n\n[Session Start]` }],
+      });
+      contents.push({
+        role: 'model',
+        parts: [{ text: 'Understood. I am AccessAI, calibrated to provide grounded, safe accessibility assistance.' }],
+      });
+
+      // Include recent conversation turns (up to last 6 turns)
+      const pastMessages = (request.conversation || []).slice(-6);
+      for (const msg of pastMessages) {
+        contents.push({
+          role: msg.sender === 'user' ? 'user' : 'model',
+          parts: [{ text: msg.text }],
+        });
+      }
+
+      // Append current user question
+      contents.push({
+        role: 'user',
+        parts: [{ text: request.text }],
+      });
+
       const generatePromise = ai.models.generateContent({
         model: config.GEMINI_MODEL,
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              {
-                text: `${systemInstruction}\n\nUser Question: ${request.text}`,
-              },
-            ],
-          },
-        ],
+        contents,
         config: {
           temperature: 0.3,
           maxOutputTokens: 300,

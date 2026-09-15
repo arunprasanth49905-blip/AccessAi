@@ -1,7 +1,8 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { AssistanceHistoryItem, ConnectionStatus } from '../types';
 import { audioFeedback } from '../services/audioFeedbackService';
 import { speechService } from '../services/speechService';
+import { apiService, BackendHealthResponse } from '../services/apiService';
 import { useAccessibility } from './AccessibilityContext';
 
 export interface ToastMessage {
@@ -11,11 +12,24 @@ export interface ToastMessage {
   type: 'info' | 'success' | 'warning' | 'alert';
 }
 
+export interface SharedAppContext {
+  lastSceneContext: { description: string; detectedObjects: string[]; timestamp: number } | null;
+  lastOcrContext: { text: string; language: string; timestamp: number } | null;
+  activeNavigationContext: { destination: string; currentStep: string } | null;
+}
+
 interface AssistantContextType {
   connectionStatus: ConnectionStatus;
+  healthDetails: BackendHealthResponse | null;
   setConnectionStatus: (status: ConnectionStatus) => void;
+  checkConnection: () => Promise<void>;
   recentAssistance: AssistanceHistoryItem[];
   addAssistanceItem: (item: Omit<AssistanceHistoryItem, 'id' | 'timestamp' | 'relativeTime'>) => void;
+  clearHistory: () => void;
+  sharedContext: SharedAppContext;
+  updateSceneContext: (description: string, detectedObjects?: string[]) => void;
+  updateOcrContext: (text: string, language: string) => void;
+  updateNavigationContext: (destination: string, currentStep: string) => void;
   toasts: ToastMessage[];
   showToast: (title: string, description?: string, type?: 'info' | 'success' | 'warning' | 'alert') => void;
   dismissToast: (id: string) => void;
@@ -24,59 +38,27 @@ interface AssistantContextType {
   closeEmergencyModal: () => void;
 }
 
-const INITIAL_HISTORY: AssistanceHistoryItem[] = [
-  {
-    id: 'h-1',
-    type: 'scene',
-    title: 'Scene described',
-    summary: 'Detected doorway 3m ahead, chair on right, person approaching from left.',
-    timestamp: new Date(Date.now() - 1000 * 60 * 18).toISOString(),
-    relativeTime: '18 mins ago',
-    confidence: 'high',
-    actionUrl: '/camera',
-  },
-  {
-    id: 'h-2',
-    type: 'ocr',
-    title: 'Restaurant menu read',
-    summary: 'Read Artisan Cafe beverage list with allergen note for gluten-free options.',
-    timestamp: new Date(Date.now() - 1000 * 60 * 45).toISOString(),
-    relativeTime: '45 mins ago',
-    confidence: 'high',
-    actionUrl: '/reader',
-  },
-  {
-    id: 'h-3',
-    type: 'safety',
-    title: 'Obstacle detected',
-    summary: 'Identified low utility cart in central walking corridor (1.5m). Caution recommended.',
-    timestamp: new Date(Date.now() - 1000 * 60 * 95).toISOString(),
-    relativeTime: '1.5 hours ago',
-    confidence: 'medium',
-    actionUrl: '/camera',
-  },
-  {
-    id: 'h-4',
-    type: 'navigation',
-    title: 'Accessible route created',
-    summary: 'Guided 120m step-free route via East Wing Ramp to Ground Entrance.',
-    timestamp: new Date(Date.now() - 1000 * 60 * 180).toISOString(),
-    relativeTime: '3 hours ago',
-    confidence: 'high',
-    actionUrl: '/navigation',
-  },
-];
-
 const HISTORY_STORAGE_KEY = 'accessai_history_v1';
 
 const AssistantContext = createContext<AssistantContextType | undefined>(undefined);
 
+let toastCounter = 0;
+
 export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { settings } = useAccessibility();
-  const [connectionStatus, setConnectionStatusState] = useState<ConnectionStatus>('connected');
+  const [connectionStatus, setConnectionStatusState] = useState<ConnectionStatus>('limited');
+  const [healthDetails, setHealthDetails] = useState<BackendHealthResponse | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [isEmergencyModalOpen, setIsEmergencyModalOpen] = useState(false);
 
+  // Shared Cross-Feature Context (Camera -> OCR -> Voice -> Navigation)
+  const [sharedContext, setSharedContext] = useState<SharedAppContext>({
+    lastSceneContext: null,
+    lastOcrContext: null,
+    activeNavigationContext: null,
+  });
+
+  // Assistance History - ONLY real stored interactions from local storage
   const [recentAssistance, setRecentAssistance] = useState<AssistanceHistoryItem[]>(() => {
     try {
       const stored = localStorage.getItem(HISTORY_STORAGE_KEY);
@@ -86,33 +68,100 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     } catch {
       // Fallback
     }
-    return INITIAL_HISTORY;
+    return [];
   });
 
   useEffect(() => {
     try {
       localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(recentAssistance));
     } catch {
-      // Ignore
+      // Ignore storage errors
     }
   }, [recentAssistance]);
 
+  // Real connection status verifier
+  const checkConnection = useCallback(async () => {
+    try {
+      const health = await apiService.getHealthDetails();
+      if (health && health.status === 'ok') {
+        setHealthDetails(health);
+        if (health.ai?.configured) {
+          setConnectionStatusState('connected');
+        } else {
+          setConnectionStatusState('limited');
+        }
+      } else {
+        setHealthDetails(null);
+        setConnectionStatusState('offline');
+      }
+    } catch {
+      setHealthDetails(null);
+      setConnectionStatusState('offline');
+    }
+  }, []);
+
+  const hasCheckedRef = useRef(false);
+
+  useEffect(() => {
+    if (!hasCheckedRef.current) {
+      hasCheckedRef.current = true;
+      checkConnection();
+    }
+
+    const intervalId = setInterval(checkConnection, 15000);
+
+    const handleOnline = () => checkConnection();
+    const handleOffline = () => setConnectionStatusState('offline');
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      clearInterval(intervalId);
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [checkConnection]);
+
   const setConnectionStatus = (status: ConnectionStatus) => {
     setConnectionStatusState(status);
-    if (status === 'offline') {
-      showToast('Offline Mode Active', 'Using local computer vision & speech fallbacks.', 'warning');
-      audioFeedback.playAlert();
-    } else if (status === 'connected') {
-      showToast('System Connected', 'Full multimodal AI assistance active.', 'success');
-      audioFeedback.playSuccess();
-    } else {
-      showToast('Limited Connection', 'Reduced bandwidth profile engaged.', 'info');
-      audioFeedback.playChime();
-    }
+  };
+
+  const updateSceneContext = (description: string, detectedObjects: string[] = []) => {
+    setSharedContext((prev) => ({
+      ...prev,
+      lastSceneContext: {
+        description,
+        detectedObjects,
+        timestamp: Date.now(),
+      },
+    }));
+  };
+
+  const updateOcrContext = (text: string, language: string) => {
+    setSharedContext((prev) => ({
+      ...prev,
+      lastOcrContext: {
+        text,
+        language,
+        timestamp: Date.now(),
+      },
+    }));
+  };
+
+  const updateNavigationContext = (destination: string, currentStep: string) => {
+    setSharedContext((prev) => ({
+      ...prev,
+      activeNavigationContext: {
+        destination,
+        currentStep,
+      },
+    }));
   };
 
   const showToast = (title: string, description?: string, type: 'info' | 'success' | 'warning' | 'alert' = 'info') => {
-    const id = `toast-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
+    toastCounter++;
+    const id = `toast-${Date.now()}-${toastCounter}`;
     setToasts((prev) => [...prev, { id, title, description, type }]);
 
     if (type === 'warning' || type === 'alert') {
@@ -139,11 +188,21 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const addAssistanceItem = (item: Omit<AssistanceHistoryItem, 'id' | 'timestamp' | 'relativeTime'>) => {
     const newItem: AssistanceHistoryItem = {
       ...item,
-      id: `h-${Date.now()}`,
+      id: `h-${Date.now()}-${++toastCounter}`,
       timestamp: new Date().toISOString(),
       relativeTime: 'Just now',
     };
-    setRecentAssistance((prev) => [newItem, ...prev.slice(0, 19)]);
+    setRecentAssistance((prev) => [newItem, ...prev.slice(0, 29)]);
+  };
+
+  const clearHistory = () => {
+    audioFeedback.playClick();
+    setRecentAssistance([]);
+    try {
+      localStorage.removeItem(HISTORY_STORAGE_KEY);
+    } catch {
+      // Ignore
+    }
   };
 
   const openEmergencyModal = () => {
@@ -159,9 +218,16 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     <AssistantContext.Provider
       value={{
         connectionStatus,
+        healthDetails,
         setConnectionStatus,
+        checkConnection,
         recentAssistance,
         addAssistanceItem,
+        clearHistory,
+        sharedContext,
+        updateSceneContext,
+        updateOcrContext,
+        updateNavigationContext,
         toasts,
         showToast,
         dismissToast,

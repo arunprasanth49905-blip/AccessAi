@@ -5,6 +5,8 @@ export interface BackendVoiceRequest {
   context?: {
     currentPage?: string;
     currentScene?: string | null;
+    lastOcrText?: string | null;
+    activeRoute?: string | null;
   };
   accessibilityProfile?: {
     textSize?: 'small' | 'medium' | 'large' | 'xlarge';
@@ -24,6 +26,23 @@ export interface BackendVoiceResponse {
   confidence: number;
   confidenceLevel: 'high' | 'medium' | 'low';
   safetyWarning: boolean;
+}
+
+export interface BackendHealthResponse {
+  status: string;
+  service: string;
+  ai?: {
+    provider: 'gemini' | 'fallback';
+    configured: boolean;
+    model: string | null;
+    fallbackAvailable: boolean;
+  };
+  ocr?: {
+    available: boolean;
+  };
+  navigation?: {
+    available: boolean;
+  };
 }
 
 export interface DetectedVisionObject {
@@ -94,6 +113,26 @@ class ApiService {
       return false;
     } catch {
       return false;
+    }
+  }
+
+  // Get detailed backend health report including Gemini and OCR availability
+  async getHealthDetails(): Promise<BackendHealthResponse | null> {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
+      const response = await fetch(`${this.getBaseUrl()}/api/health`, {
+        method: 'GET',
+        headers: { 'Accept': 'application/json' },
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      if (response.ok) {
+        return (await response.json()) as BackendHealthResponse;
+      }
+      return null;
+    } catch {
+      return null;
     }
   }
 
@@ -260,6 +299,62 @@ class ApiService {
       throw error;
     }
   }
+
+  // Calculate accessible step-free route via backend navigation engine
+  async calculateAccessibleRoute(request: BackendNavigationRouteRequest): Promise<BackendNavigationRouteResponse> {
+    const url = `${this.getBaseUrl()}/api/navigation/route`;
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify(request),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
+        throw new Error(`Navigation route calculation failed with status ${response.status}: ${errorText}`);
+      }
+
+      return (await response.json()) as BackendNavigationRouteResponse;
+    } catch (err: unknown) {
+      clearTimeout(timeoutId);
+      const error = err as Error;
+      if (error.name === 'AbortError') {
+        throw new Error('Navigation request timed out after 10 seconds.');
+      }
+      throw error;
+    }
+  }
+
+  // Get available accessible indoor destinations
+  async getNavigationDestinations(): Promise<Array<{ id: string; name: string; type: string; stepFree: boolean }>> {
+    const url = `${this.getBaseUrl()}/api/navigation/destinations`;
+
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: { 'Accept': 'application/json' },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        return data.destinations || [];
+      }
+      return [];
+    } catch {
+      return [];
+    }
+  }
 }
 
 export interface OcrRegion {
@@ -324,6 +419,56 @@ export interface BackendOcrTranslateResponse {
   targetLanguage: 'en' | 'ta' | 'hi' | 'ml' | 'te';
   text: string;
   confidence: number;
+}
+
+export interface BackendNavStep {
+  id: string;
+  instruction: string;
+  detail: string;
+  nodeType: 'start' | 'ramp' | 'elevator' | 'door' | 'hallway' | 'destination';
+  distance: string;
+  distanceMeters: number;
+  isAccessible: boolean;
+  audioAnnouncement: string;
+}
+
+export interface BackendNavigationPreferences {
+  avoidStairs: boolean;
+  preferRamps: boolean;
+  preferElevators: boolean;
+  avoidCrowds?: boolean;
+  preferWellLit?: boolean;
+  stepFreeOnly?: boolean;
+  minimizeWalking?: boolean;
+}
+
+export interface BackendNavigationRouteRequest {
+  origin?: string;
+  destination: string;
+  preferences?: Partial<BackendNavigationPreferences>;
+  accessibilityProfile?: {
+    textSize?: string;
+    simplifiedMode?: boolean;
+    voiceGuidance?: boolean;
+    language?: string;
+  };
+}
+
+export interface BackendNavigationRouteResponse {
+  destination: string;
+  destinationName: string;
+  originName: string;
+  distanceMeters: number;
+  durationMinutes: number;
+  stepFree: boolean;
+  steps: BackendNavStep[];
+  features: string[];
+  tactilePaving: boolean;
+  crowdLevel: 'low' | 'moderate' | 'busy';
+  lighting: 'bright' | 'adequate';
+  source: 'accessible-routing-engine' | 'ai';
+  gpsAvailable: false;
+  disclaimer: string;
 }
 
 export const apiService = new ApiService();
