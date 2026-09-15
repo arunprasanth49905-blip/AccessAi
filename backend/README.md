@@ -39,9 +39,16 @@ GEMINI_MODEL=gemini-2.5-flash
 
 ## Endpoints
 
-- `GET /api/health` — Health check endpoint (reports service and AI provider status safely without exposing secrets)
+- `GET /api/health` — Health check endpoint (reports service, AI provider, and OCR status safely without exposing secrets)
 - `POST /api/voice/chat` — Voice assistant reasoning endpoint with accessibility profile awareness
 - `POST /api/vision/analyze` — Multimodal vision analysis endpoint for camera frames
+- `POST /api/ocr/extract` — Multimodal OCR extraction for signage, labels, and documents (accepts multipart/form-data or Base64)
+- `POST /api/ocr/simplify` — Plain-language text simplification for cognitive accessibility
+- `POST /api/ocr/translate` — Multilingual translation preserving numbers, dates, times, and prices (en, ta, hi, ml, te)
+
+## Privacy & Data Handling
+
+Raw camera captures and uploaded images are processed in memory and are **never stored permanently** or logged to disk by AccessAI.
 
 ## Getting Started
 

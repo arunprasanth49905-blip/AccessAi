@@ -152,6 +152,178 @@ class ApiService {
       throw error;
     }
   }
+
+  // Send image to backend OCR API for text extraction with a 15-second timeout
+  async extractOCR(request: BackendOcrExtractRequest): Promise<BackendOcrResult> {
+    const url = `${this.getBaseUrl()}/api/ocr/extract`;
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify(request),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
+        throw new Error(`OCR extraction failed with status ${response.status}: ${errorText}`);
+      }
+
+      return (await response.json()) as BackendOcrResult;
+    } catch (err: unknown) {
+      clearTimeout(timeoutId);
+      const error = err as Error;
+      if (error.name === 'AbortError') {
+        throw new Error('OCR extraction timed out after 15 seconds.');
+      }
+      throw error;
+    }
+  }
+
+  // Send extracted text to backend to simplify into plain language
+  async simplifyOCRText(request: BackendOcrSimplifyRequest): Promise<BackendOcrSimplifyResponse> {
+    const url = `${this.getBaseUrl()}/api/ocr/simplify`;
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify(request),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
+        throw new Error(`Simplification failed with status ${response.status}: ${errorText}`);
+      }
+
+      return (await response.json()) as BackendOcrSimplifyResponse;
+    } catch (err: unknown) {
+      clearTimeout(timeoutId);
+      const error = err as Error;
+      if (error.name === 'AbortError') {
+        throw new Error('Simplification request timed out after 12 seconds.');
+      }
+      throw error;
+    }
+  }
+
+  // Send extracted text to backend to translate into target language
+  async translateOCRText(request: BackendOcrTranslateRequest): Promise<BackendOcrTranslateResponse> {
+    const url = `${this.getBaseUrl()}/api/ocr/translate`;
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify(request),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
+        throw new Error(`Translation failed with status ${response.status}: ${errorText}`);
+      }
+
+      return (await response.json()) as BackendOcrTranslateResponse;
+    } catch (err: unknown) {
+      clearTimeout(timeoutId);
+      const error = err as Error;
+      if (error.name === 'AbortError') {
+        throw new Error('Translation request timed out after 12 seconds.');
+      }
+      throw error;
+    }
+  }
+}
+
+export interface OcrRegion {
+  text: string;
+  confidence: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface BackendOcrResult {
+  source: 'ai' | 'demo';
+  text: string;
+  detectedLanguage: string;
+  confidence: number;
+  confidenceLevel: 'high' | 'medium' | 'low';
+  regions: OcrRegion[];
+}
+
+export interface BackendOcrExtractRequest {
+  image: string; // Base64 data URL
+  sourceLanguage?: string;
+  accessibilityProfile?: {
+    textSize?: string;
+    contrast?: string;
+    simplifiedMode?: boolean;
+    voiceGuidance?: boolean;
+    language?: string;
+    reducedMotion?: boolean;
+  };
+  context?: {
+    currentPage?: string;
+  };
+}
+
+export interface BackendOcrSimplifyRequest {
+  text: string;
+  language?: string;
+  accessibilityProfile?: {
+    simplifiedMode?: boolean;
+  };
+}
+
+export interface BackendOcrSimplifyResponse {
+  text: string;
+  confidence: number;
+}
+
+export interface BackendOcrTranslateRequest {
+  text: string;
+  sourceLanguage?: string;
+  targetLanguage: 'en' | 'ta' | 'hi' | 'ml' | 'te';
+  accessibilityProfile?: {
+    simplifiedMode?: boolean;
+    language?: string;
+  };
+}
+
+export interface BackendOcrTranslateResponse {
+  sourceLanguage: string;
+  targetLanguage: 'en' | 'ta' | 'hi' | 'ml' | 'te';
+  text: string;
+  confidence: number;
 }
 
 export const apiService = new ApiService();

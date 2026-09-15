@@ -3,6 +3,7 @@ import cors from 'cors';
 import { config } from './config/env.js';
 import voiceRoutes from './routes/voice.routes.js';
 import visionRoutes from './routes/vision.routes.js';
+import ocrRoutes from './routes/ocr.routes.js';
 import { errorHandler } from './middleware/error.middleware.js';
 
 export const app = express();
@@ -39,12 +40,16 @@ app.get('/api/health', (_req, res) => {
       model: isConfigured ? config.GEMINI_MODEL : null,
       fallbackAvailable: true,
     },
+    ocr: {
+      available: true,
+    },
   });
 });
 
 // Mount routes
 app.use('/api/voice', voiceRoutes);
 app.use('/api/vision', visionRoutes);
+app.use('/api/ocr', ocrRoutes);
 
 // Error middleware
 app.use(errorHandler);
