@@ -28,7 +28,7 @@ class CameraService {
           width: { ideal: 1280 },
           height: { ideal: 720 },
         },
-        audio: false,
+        audio: false, // Do not request microphone permission unnecessarily from the camera page
       });
 
       this.mediaStream = stream;
@@ -40,9 +40,9 @@ class CameraService {
       const error = err as Error;
       let errorMsg = 'Failed to access camera';
       if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
-        errorMsg = 'Camera permission denied. Switching to Demo Mode.';
+        errorMsg = 'Camera permission denied. Demo Vision is ready.';
       } else if (error.name === 'NotFoundError') {
-        errorMsg = 'No camera found on this device.';
+        errorMsg = 'No camera hardware found on this device.';
       }
       return { success: false, error: errorMsg };
     }
@@ -55,20 +55,49 @@ class CameraService {
     }
   }
 
-  captureSnapshot(videoElement: HTMLVideoElement): string | null {
+  isStreaming(): boolean {
+    return !!(this.mediaStream && this.mediaStream.active);
+  }
+
+  // Capture video frame with resizing to target max dimension (e.g. 1280px) and JPEG compression
+  captureOptimizedFrame(
+    videoElement: HTMLVideoElement,
+    maxDimension: number = 1280,
+    quality: number = 0.82
+  ): string | null {
     try {
+      const sourceWidth = videoElement.videoWidth || 640;
+      const sourceHeight = videoElement.videoHeight || 480;
+
+      let targetWidth = sourceWidth;
+      let targetHeight = sourceHeight;
+
+      if (sourceWidth > maxDimension || sourceHeight > maxDimension) {
+        if (sourceWidth >= sourceHeight) {
+          targetWidth = maxDimension;
+          targetHeight = Math.round((sourceHeight / sourceWidth) * maxDimension);
+        } else {
+          targetHeight = maxDimension;
+          targetWidth = Math.round((sourceWidth / sourceHeight) * maxDimension);
+        }
+      }
+
       const canvas = document.createElement('canvas');
-      canvas.width = videoElement.videoWidth || 640;
-      canvas.height = videoElement.videoHeight || 480;
+      canvas.width = targetWidth;
+      canvas.height = targetHeight;
       const ctx = canvas.getContext('2d');
       if (!ctx) return null;
 
-      ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
-      return canvas.toDataURL('image/jpeg', 0.85);
+      ctx.drawImage(videoElement, 0, 0, targetWidth, targetHeight);
+      return canvas.toDataURL('image/jpeg', quality);
     } catch (err) {
       console.warn('Failed to capture snapshot:', err);
       return null;
     }
+  }
+
+  captureSnapshot(videoElement: HTMLVideoElement): string | null {
+    return this.captureOptimizedFrame(videoElement, 1280, 0.82);
   }
 }
 

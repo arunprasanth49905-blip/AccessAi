@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import voiceRoutes from './routes/voice.routes.js';
+import visionRoutes from './routes/vision.routes.js';
 import { errorHandler } from './middleware/error.middleware.js';
 
 export const app = express();
@@ -21,8 +22,9 @@ app.use(
   })
 );
 
-// JSON body parser
-app.use(express.json());
+// JSON and URL-encoded body parser with 10MB limit for image uploads
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Health check endpoint
 app.get('/api/health', (_req, res) => {
@@ -32,8 +34,9 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
-// Mount voice routes
+// Mount routes
 app.use('/api/voice', voiceRoutes);
+app.use('/api/vision', visionRoutes);
 
 // Error middleware
 app.use(errorHandler);
