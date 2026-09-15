@@ -1,0 +1,137 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --base-font-size: 16px;
+    --contrast-bg: #f8fafc;
+    --contrast-card: #ffffff;
+    --contrast-text: #0f172a;
+    --contrast-border: #e2e8f0;
+    --contrast-accent: #2563eb;
+    font-size: var(--base-font-size);
+  }
+
+  /* Font Scaling Modes */
+  html[data-text-size="small"] {
+    --base-font-size: 14px;
+  }
+  html[data-text-size="medium"] {
+    --base-font-size: 16px;
+  }
+  html[data-text-size="large"] {
+    --base-font-size: 19px;
+  }
+  html[data-text-size="xlarge"] {
+    --base-font-size: 22px;
+  }
+
+  /* Dark Theme */
+  html[data-theme="dark"] {
+    --contrast-bg: #0b0f19;
+    --contrast-card: #131b2e;
+    --contrast-text: #f1f5f9;
+    --contrast-border: #1e293b;
+    --contrast-accent: #3b82f6;
+  }
+
+  /* High Contrast Dark Mode */
+  html[data-contrast="high-dark"] {
+    --contrast-bg: #000000;
+    --contrast-card: #0a0a0a;
+    --contrast-text: #ffffff;
+    --contrast-border: #ffff00;
+    --contrast-accent: #00e5ff;
+    color: #ffffff !important;
+    background-color: #000000 !important;
+  }
+  html[data-contrast="high-dark"] * {
+    border-color: #444444;
+  }
+  html[data-contrast="high-dark"] button,
+  html[data-contrast="high-dark"] a,
+  html[data-contrast="high-dark"] input {
+    border-width: 2px !important;
+    border-color: #ffff00 !important;
+  }
+
+  /* High Contrast Light Mode */
+  html[data-contrast="high-light"] {
+    --contrast-bg: #ffffff;
+    --contrast-card: #ffffff;
+    --contrast-text: #000000;
+    --contrast-border: #000000;
+    --contrast-accent: #0000ee;
+    color: #000000 !important;
+    background-color: #ffffff !important;
+  }
+  html[data-contrast="high-light"] * {
+    border-color: #000000;
+  }
+  html[data-contrast="high-light"] button,
+  html[data-contrast="high-light"] a,
+  html[data-contrast="high-light"] input {
+    border-width: 2px !important;
+    border-color: #000000 !important;
+  }
+
+  /* Reduced Motion */
+  html[data-reduced-motion="true"] *,
+  html[data-reduced-motion="true"] *::before,
+  html[data-reduced-motion="true"] *::after {
+    animation-duration: 0.001s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001s !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* Focus visible accessibility styling */
+  :focus-visible {
+    outline: 3px solid #2563eb;
+    outline-offset: 3px;
+  }
+
+  html[data-contrast="high-dark"] :focus-visible {
+    outline: 4px solid #ffff00 !important;
+    outline-offset: 4px !important;
+  }
+
+  html[data-contrast="high-light"] :focus-visible {
+    outline: 4px solid #000000 !important;
+    outline-offset: 4px !important;
+  }
+}
+
+/* Custom Scrollbar for Accessibility */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+html[data-theme="dark"] ::-webkit-scrollbar-track {
+  background: #0f172a;
+}
+::-webkit-scrollbar-thumb {
+  background: #94a3b8;
+  border-radius: 5px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+
+/* Audio wave bars */
+.wave-container {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 48px;
+}
+.wave-bar-element {
+  width: 5px;
+  border-radius: 9999px;
+  background-color: #2563eb;
+  animation: waveBar 1.2s ease-in-out infinite alternate;
+}
