@@ -1,11 +1,9 @@
 import { VoiceChatRequest, VoiceChatResponse } from '../types/voice.types.js';
-import { GenericAIProvider } from './providers/ai.provider.js';
+import { geminiProvider } from './providers/gemini.provider.js';
 
 export class AssistantService {
-  private provider = new GenericAIProvider();
-
   async processVoiceChat(request: VoiceChatRequest): Promise<VoiceChatResponse> {
-    return this.provider.generateResponse(request);
+    return geminiProvider.generateVoiceResponse(request);
   }
 }
 

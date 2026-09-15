@@ -1,12 +1,16 @@
-import dotenv from 'dotenv';
-dotenv.config();
-
 import { app } from './app.js';
+import { config } from './config/env.js';
 
-const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8000;
+const PORT = config.PORT;
 
 app.listen(PORT, () => {
   console.log(`AccessAI backend server listening on http://localhost:${PORT}`);
   console.log(`Health check: http://localhost:${PORT}/api/health`);
-  console.log(`Voice API: http://localhost:${PORT}/api/voice/chat`);
+  console.log(`Voice API:    http://localhost:${PORT}/api/voice/chat`);
+  console.log(`Vision API:   http://localhost:${PORT}/api/vision/analyze`);
+  if (config.isGeminiConfigured()) {
+    console.log(`[AI] Google Gemini provider active (model: ${config.GEMINI_MODEL})`);
+  } else {
+    console.log(`[AI] Google Gemini not configured; deterministic fallback engine active`);
+  }
 });

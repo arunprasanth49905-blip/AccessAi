@@ -1,11 +1,9 @@
 import { VisionAnalyzeInput, VisionResult } from '../types/vision.types.js';
-import { VisionAiProvider } from './providers/visionAi.provider.js';
+import { geminiProvider } from './providers/gemini.provider.js';
 
 export class VisionService {
-  private provider = new VisionAiProvider();
-
   async analyzeScene(input: VisionAnalyzeInput): Promise<VisionResult> {
-    const result = await this.provider.analyze(input);
+    const result = await geminiProvider.analyzeVision(input);
 
     // Normalize and sanitize bounding boxes if present
     if (result.objects && result.objects.length > 0) {

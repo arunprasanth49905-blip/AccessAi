@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import { config } from './config/env.js';
 import voiceRoutes from './routes/voice.routes.js';
 import visionRoutes from './routes/vision.routes.js';
 import { errorHandler } from './middleware/error.middleware.js';
@@ -7,7 +8,7 @@ import { errorHandler } from './middleware/error.middleware.js';
 export const app = express();
 
 // CORS configuration for the Vite React frontend
-const allowedOrigin = process.env.FRONTEND_URL || 'http://localhost:5173';
+const allowedOrigin = config.FRONTEND_URL;
 app.use(
   cors({
     origin: (origin, callback) => {
@@ -26,11 +27,18 @@ app.use(
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Health check endpoint
+// Health check endpoint (safe status reporting with zero secret exposure)
 app.get('/api/health', (_req, res) => {
+  const isConfigured = config.isGeminiConfigured();
   res.status(200).json({
     status: 'ok',
     service: 'AccessAI backend',
+    ai: {
+      provider: isConfigured ? 'gemini' : 'fallback',
+      configured: isConfigured,
+      model: isConfigured ? config.GEMINI_MODEL : null,
+      fallbackAvailable: true,
+    },
   });
 });
 
