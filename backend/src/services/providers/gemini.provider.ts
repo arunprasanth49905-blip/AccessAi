@@ -1,7 +1,7 @@
 import { GoogleGenAI } from '@google/genai';
 import { config } from '../../config/env.js';
 import { VoiceChatRequest, VoiceChatResponse } from '../../types/voice.types.js';
-import { VisionAnalyzeInput, VisionResult } from '../../types/vision.types.js';
+import { VisionAnalyzeInput, VisionResult, DetectedVisionObject } from '../../types/vision.types.js';
 import { FallbackProvider } from './fallback.provider.js';
 import { VisionFallbackProvider } from './visionFallback.provider.js';
 
@@ -105,16 +105,29 @@ Core Principles:
         parts: [{ text: request.text }],
       });
 
-      const generatePromise = ai.models.generateContent({
-        model: config.GEMINI_MODEL,
-        contents,
-        config: {
-          temperature: 0.3,
-          maxOutputTokens: 300,
-        },
-      });
+      const executeCall = async (modelToUse: string) => {
+        return ai.models.generateContent({
+          model: modelToUse,
+          contents,
+          config: {
+            temperature: 0.3,
+            maxOutputTokens: 300,
+          },
+        });
+      };
 
-      const response = await Promise.race([generatePromise, timeoutPromise]);
+      let response;
+      try {
+        response = await Promise.race([executeCall(config.GEMINI_MODEL), timeoutPromise]);
+      } catch (firstErr: unknown) {
+        if (config.GEMINI_MODEL !== 'gemini-3.5-flash-lite') {
+          console.warn(`[AI] Voice primary model ${config.GEMINI_MODEL} failed, retrying with gemini-3.5-flash-lite...`);
+          response = await Promise.race([executeCall('gemini-3.5-flash-lite'), timeoutPromise]);
+        } else {
+          throw firstErr;
+        }
+      }
+
       const answer = response.text?.trim();
 
       if (answer) {

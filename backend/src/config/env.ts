@@ -11,16 +11,15 @@ export interface AppConfig {
 
 function resolveValidModel(envModel?: string): string {
   const m = envModel?.trim();
-  // Deprecated models that return 404
-  if (!m || m === 'gemini-2.5-flash' || m === 'gemini-2.5-flash-lite' || m.startsWith('gemini-1.5') || m.startsWith('gemini-2.0')) {
-    return 'gemini-3.5-flash-lite';
+  if (!m) {
+    return 'gemini-2.5-flash';
   }
   return m;
 }
 
 export const config: AppConfig = {
-  PORT: process.env.PORT ? parseInt(process.env.PORT, 10) : 3000,
-  FRONTEND_URL: process.env.FRONTEND_URL || 'http://localhost:3000',
+  PORT: process.env.PORT ? parseInt(process.env.PORT, 10) : 8000,
+  FRONTEND_URL: process.env.FRONTEND_URL || 'http://localhost:5173',
   GEMINI_API_KEY: process.env.GEMINI_API_KEY?.trim() || undefined,
   GEMINI_MODEL: resolveValidModel(process.env.GEMINI_MODEL),
   isGeminiConfigured(): boolean {
