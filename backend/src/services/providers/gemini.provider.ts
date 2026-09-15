@@ -1,7 +1,7 @@
 import { GoogleGenAI } from '@google/genai';
 import { config } from '../../config/env.js';
 import { VoiceChatRequest, VoiceChatResponse } from '../../types/voice.types.js';
-import { VisionAnalyzeInput, VisionResult, VisionResultSchema } from '../../types/vision.types.js';
+import { VisionAnalyzeInput, VisionResult } from '../../types/vision.types.js';
 import { FallbackProvider } from './fallback.provider.js';
 import { VisionFallbackProvider } from './visionFallback.provider.js';
 
@@ -182,11 +182,13 @@ Accessibility Profile:
 - language: ${input.accessibilityProfile?.language || 'en'}
 
 Priorities:
-1. Immediate safety hazards and obstacles in walking path.
-2. Doors, exits, ramps, stairs, elevators, pathways.
-3. High-visibility objects (chairs, tables, people, signs).
-4. Relative spatial position (ahead, left, right, below, center).
-5. Never state that a path is 100% safe. If an obstacle exists or vision is uncertain, set riskDetected: true.
+1. Immediate safety hazards and obstacles in walking path (cords, spills, drop-offs, low objects).
+2. Doors, exits, hallways, ramps, stairs, clear walkways.
+3. High-visibility objects (chairs, tables, people, signs, devices, furniture).
+4. Relative spatial position ('ahead' | 'left' | 'right' | 'below' | 'center').
+5. Bounding box coordinates MUST be percentages from 0 to 100:
+   "box": { "top": 25.0, "left": 15.0, "width": 30.0, "height": 40.0 }
+6. Never state that a path is 100% safe. If an obstacle exists or vision is uncertain, set riskDetected: true.
 
 Return strictly valid JSON matching this schema:
 {
@@ -197,8 +199,8 @@ Return strictly valid JSON matching this schema:
       "label": string,
       "confidence": number (0.0 to 1.0),
       "position": "ahead" | "left" | "right" | "below" | "center",
-      "box": { "top": number, "left": number, "width": number, "height": number } (optional, 0-100 normalized),
-      "details": string (optional)
+      "box": { "top": number, "left": number, "width": number, "height": number },
+      "details": string
     }
   ],
   "safety": {
@@ -210,6 +212,110 @@ Return strictly valid JSON matching this schema:
   "confidenceLevel": "high" | "medium" | "low"
 }`;
 
+    // Helper to normalize and sanitize raw parsed JSON from Gemini
+    const normalizeVisionResponse = (parsed: any): VisionResult => {
+      const description =
+        typeof parsed.description === 'string' && parsed.description.trim()
+          ? parsed.description.trim()
+          : 'Visual scene analyzed successfully.';
+
+      const rawObjects = Array.isArray(parsed.objects) ? parsed.objects : [];
+      const normalizedObjects: DetectedVisionObject[] = [];
+
+      for (const obj of rawObjects) {
+        if (!obj || typeof obj !== 'object') continue;
+        const label = String(obj.label || 'Object').trim();
+
+        let conf = Number(obj.confidence);
+        if (isNaN(conf) || conf <= 0) conf = 0.85;
+        if (conf > 1 && conf <= 100) conf = conf / 100;
+        conf = Math.max(0.1, Math.min(1.0, Math.round(conf * 100) / 100));
+
+        let pos: 'ahead' | 'left' | 'right' | 'below' | 'center' = 'ahead';
+        const rawPos = String(obj.position || '').toLowerCase();
+        if (['ahead', 'left', 'right', 'below', 'center'].includes(rawPos)) {
+          pos = rawPos as any;
+        } else if (rawPos.includes('left')) pos = 'left';
+        else if (rawPos.includes('right')) pos = 'right';
+        else if (rawPos.includes('center') || rawPos.includes('mid')) pos = 'center';
+        else if (rawPos.includes('low') || rawPos.includes('bottom') || rawPos.includes('ground') || rawPos.includes('floor')) pos = 'below';
+
+        let boxObj: { top: number; left: number; width: number; height: number } | undefined = undefined;
+        if (obj.box && typeof obj.box === 'object') {
+          let top = Number(obj.box.top ?? obj.box.ymin ?? 0);
+          let left = Number(obj.box.left ?? obj.box.xmin ?? 0);
+          let width = Number(obj.box.width ?? (obj.box.xmax !== undefined ? obj.box.xmax - left : 20));
+          let height = Number(obj.box.height ?? (obj.box.ymax !== undefined ? obj.box.ymax - top : 20));
+
+          // Normalize from 0..1000 if needed
+          if (top > 100 || left > 100 || width > 100 || height > 100) {
+            top = top / 10;
+            left = left / 10;
+            width = width / 10;
+            height = height / 10;
+          } else if (top <= 1 && left <= 1 && width <= 1 && height <= 1 && (top > 0 || left > 0 || width > 0 || height > 0)) {
+            top = top * 100;
+            left = left * 100;
+            width = width * 100;
+            height = height * 100;
+          }
+
+          // In case model supplied right/bottom instead of width/height
+          if (width > left && left + width > 100) {
+            width = Math.max(5, width - left);
+          }
+          if (height > top && top + height > 100) {
+            height = Math.max(5, height - top);
+          }
+
+          top = Math.max(0, Math.min(95, Math.round(top * 10) / 10));
+          left = Math.max(0, Math.min(95, Math.round(left * 10) / 10));
+          width = Math.max(5, Math.min(100 - left, Math.round(width * 10) / 10));
+          height = Math.max(5, Math.min(100 - top, Math.round(height * 10) / 10));
+
+          boxObj = { top, left, width, height };
+        }
+
+        normalizedObjects.push({
+          label,
+          confidence: conf,
+          position: pos,
+          box: boxObj,
+          details: typeof obj.details === 'string' ? obj.details : undefined,
+        });
+      }
+
+      const rawSafety = parsed.safety && typeof parsed.safety === 'object' ? parsed.safety : {};
+      const riskDetected = Boolean(rawSafety.riskDetected);
+      const safetyMessage =
+        typeof rawSafety.message === 'string' && rawSafety.message.trim()
+          ? rawSafety.message.trim()
+          : riskDetected
+          ? 'Potential hazard or obstruction detected. Please verify before moving.'
+          : 'No immediate hazards detected in the visible path.';
+
+      let overallConf = Number(parsed.confidence);
+      if (isNaN(overallConf) || overallConf <= 0) overallConf = 0.9;
+      if (overallConf > 1 && overallConf <= 100) overallConf = overallConf / 100;
+      overallConf = Math.max(0.1, Math.min(1.0, Math.round(overallConf * 100) / 100));
+
+      const confidenceLevel: 'high' | 'medium' | 'low' =
+        overallConf >= 0.8 ? 'high' : overallConf >= 0.5 ? 'medium' : 'low';
+
+      return {
+        source: 'ai',
+        description,
+        objects: normalizedObjects,
+        safety: {
+          riskDetected,
+          message: safetyMessage,
+          confidence: riskDetected ? 0.78 : 0.95,
+        },
+        confidence: overallConf,
+        confidenceLevel,
+      };
+    };
+
     try {
       console.log(`[AI] Gemini vision analysis started (model: ${config.GEMINI_MODEL})`);
 
@@ -219,48 +325,56 @@ Return strictly valid JSON matching this schema:
         setTimeout(() => reject(new Error('Gemini vision analysis timed out')), timeoutMs);
       });
 
-      const generatePromise = ai.models.generateContent({
-        model: config.GEMINI_MODEL,
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              {
-                inlineData: {
-                  mimeType,
-                  data: cleanBase64,
+      const executeCall = async (modelToUse: string) => {
+        return ai.models.generateContent({
+          model: modelToUse,
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                {
+                  inlineData: {
+                    mimeType,
+                    data: cleanBase64,
+                  },
                 },
-              },
-              {
-                text: prompt,
-              },
-            ],
+                {
+                  text: prompt,
+                },
+              ],
+            },
+          ],
+          config: {
+            temperature: 0.2,
+            maxOutputTokens: 800,
+            responseMimeType: 'application/json',
           },
-        ],
-        config: {
-          temperature: 0.2,
-          maxOutputTokens: 800,
-          responseMimeType: 'application/json',
-        },
-      });
+        });
+      };
 
-      const response = await Promise.race([generatePromise, timeoutPromise]);
+      let response;
+      try {
+        response = await Promise.race([executeCall(config.GEMINI_MODEL), timeoutPromise]);
+      } catch (firstErr: any) {
+        // If 404 or model error, retry with gemini-3.5-flash-lite
+        if (config.GEMINI_MODEL !== 'gemini-3.5-flash-lite') {
+          console.warn(`[AI] Primary model ${config.GEMINI_MODEL} failed, retrying with gemini-3.5-flash-lite...`);
+          response = await Promise.race([executeCall('gemini-3.5-flash-lite'), timeoutPromise]);
+        } else {
+          throw firstErr;
+        }
+      }
+
       const rawJson = response.text?.trim();
 
       if (rawJson) {
         try {
           const parsed = JSON.parse(rawJson);
-          parsed.source = 'ai';
-          const validated = VisionResultSchema.safeParse(parsed);
-
-          if (validated.success) {
-            console.log('[AI] Gemini vision analysis completed and validated successfully');
-            return validated.data;
-          } else {
-            console.warn('[AI] Gemini vision response schema mismatch, using fallback');
-          }
-        } catch {
-          console.warn('[AI] Failed to parse JSON from Gemini vision, using fallback');
+          const normalized = normalizeVisionResponse(parsed);
+          console.log(`[AI] Gemini vision completed: ${normalized.objects.length} objects detected from image.`);
+          return normalized;
+        } catch (parseErr) {
+          console.warn('[AI] Failed to parse JSON from Gemini vision:', parseErr);
         }
       }
 

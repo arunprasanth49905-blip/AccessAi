@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { AssistanceHistoryItem, ConnectionStatus } from '../types';
 import { audioFeedback } from '../services/audioFeedbackService';
 import { speechService } from '../services/speechService';
@@ -100,15 +100,13 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   }, []);
 
-  const hasCheckedRef = useRef(false);
-
   useEffect(() => {
-    if (!hasCheckedRef.current) {
-      hasCheckedRef.current = true;
-      checkConnection();
-    }
+    checkConnection();
+    // Fast retries on initial mount in case server is booting
+    const timer1 = setTimeout(checkConnection, 1200);
+    const timer2 = setTimeout(checkConnection, 3500);
 
-    const intervalId = setInterval(checkConnection, 15000);
+    const intervalId = setInterval(checkConnection, 12000);
 
     const handleOnline = () => checkConnection();
     const handleOffline = () => setConnectionStatusState('offline');
@@ -117,6 +115,8 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     window.addEventListener('offline', handleOffline);
 
     return () => {
+      clearTimeout(timer1);
+      clearTimeout(timer2);
       clearInterval(intervalId);
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);

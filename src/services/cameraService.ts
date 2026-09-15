@@ -9,12 +9,29 @@ export interface CameraState {
 
 class CameraService {
   private mediaStream: MediaStream | null = null;
+  private currentFacingMode: 'user' | 'environment' = 'environment';
 
   async checkCameraSupport(): Promise<boolean> {
     return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
   }
 
-  async startCamera(videoElement: HTMLVideoElement): Promise<{ success: boolean; error?: string }> {
+  getFacingMode(): 'user' | 'environment' {
+    return this.currentFacingMode;
+  }
+
+  setFacingMode(mode: 'user' | 'environment') {
+    this.currentFacingMode = mode;
+  }
+
+  toggleFacingMode(): 'user' | 'environment' {
+    this.currentFacingMode = this.currentFacingMode === 'environment' ? 'user' : 'environment';
+    return this.currentFacingMode;
+  }
+
+  async startCamera(
+    videoElement: HTMLVideoElement,
+    preferredFacingMode?: 'user' | 'environment'
+  ): Promise<{ success: boolean; error?: string; facingMode?: 'user' | 'environment' }> {
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         return { success: false, error: 'Camera API not supported in this browser' };
@@ -22,9 +39,13 @@ class CameraService {
 
       this.stopCamera();
 
+      if (preferredFacingMode) {
+        this.currentFacingMode = preferredFacingMode;
+      }
+
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
-          facingMode: { ideal: 'environment' },
+          facingMode: { ideal: this.currentFacingMode },
           width: { ideal: 1280 },
           height: { ideal: 720 },
         },
@@ -35,12 +56,12 @@ class CameraService {
       videoElement.srcObject = stream;
       await videoElement.play();
 
-      return { success: true };
+      return { success: true, facingMode: this.currentFacingMode };
     } catch (err: unknown) {
       const error = err as Error;
       let errorMsg = 'Failed to access camera';
       if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
-        errorMsg = 'Camera permission denied. Demo Vision is ready.';
+        errorMsg = 'Camera permission denied. You can upload a photo or use sample test scenes.';
       } else if (error.name === 'NotFoundError') {
         errorMsg = 'No camera hardware found on this device.';
       }
