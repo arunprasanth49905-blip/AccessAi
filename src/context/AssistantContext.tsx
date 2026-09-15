@@ -36,8 +36,14 @@ export interface OcrContextData {
 export interface NavigationContextData {
   destination: string;
   currentStep: string;
-  stepFree: boolean;
+  nextStep?: string;
+  distanceToNext?: string;
   distanceRemaining?: string;
+  isOffRoute?: boolean;
+  routeSource?: string;
+  accuracyLevel?: string;
+  status?: string;
+  stepFree: boolean;
   updatedAt: number;
 }
 
@@ -75,7 +81,20 @@ interface AssistantContextType {
   sharedContext: SharedAppContext;
   updateVisionResult: (result: { description: string; objects: Array<{ label: string }>; safety?: { riskDetected: boolean; message: string }; confidence?: number; confidenceLevel?: 'high' | 'medium' | 'low' }) => void;
   updateOcrResult: (text: string, language: string, options?: { simplifiedText?: string; translatedText?: string; targetLanguage?: string; confidence?: number; confidenceLevel?: 'high' | 'medium' | 'low' }) => void;
-  updateNavigationState: (destination: string, currentStep: string, options?: { stepFree?: boolean; distanceRemaining?: string }) => void;
+  updateNavigationState: (
+    destination: string,
+    currentStep: string,
+    options?: {
+      stepFree?: boolean;
+      distanceRemaining?: string;
+      nextStep?: string;
+      distanceToNext?: string;
+      isOffRoute?: boolean;
+      routeSource?: string;
+      accuracyLevel?: string;
+      status?: string;
+    }
+  ) => void;
   updateSafetyState: (riskDetected: boolean, message?: string, warning?: string) => void;
   clearFeatureContext: (feature: 'vision' | 'ocr' | 'navigation' | 'safety') => void;
   clearSessionContext: () => void;
@@ -270,14 +289,29 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const updateNavigationState = useCallback((
     destination: string,
     currentStep: string,
-    options?: { stepFree?: boolean; distanceRemaining?: string }
+    options?: {
+      stepFree?: boolean;
+      distanceRemaining?: string;
+      nextStep?: string;
+      distanceToNext?: string;
+      isOffRoute?: boolean;
+      routeSource?: string;
+      accuracyLevel?: string;
+      status?: string;
+    }
   ) => {
     const timestamp = Date.now();
     const navData: NavigationContextData = {
       destination,
       currentStep,
-      stepFree: options?.stepFree ?? true,
+      nextStep: options?.nextStep,
+      distanceToNext: options?.distanceToNext,
       distanceRemaining: options?.distanceRemaining,
+      isOffRoute: options?.isOffRoute,
+      routeSource: options?.routeSource,
+      accuracyLevel: options?.accuracyLevel,
+      status: options?.status,
+      stepFree: options?.stepFree ?? true,
       updatedAt: timestamp,
     };
 

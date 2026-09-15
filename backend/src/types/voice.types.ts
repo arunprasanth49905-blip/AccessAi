@@ -37,8 +37,14 @@ export type OcrContextSummary = z.infer<typeof OcrContextSummarySchema>;
 export const NavigationContextSummarySchema = z.object({
   destination: z.string().optional(),
   currentStep: z.string().optional(),
-  stepFree: z.boolean().optional(),
+  nextStep: z.string().optional(),
+  distanceToNext: z.string().optional(),
   distanceRemaining: z.string().optional(),
+  isOffRoute: z.boolean().optional(),
+  routeSource: z.string().optional(),
+  accuracyLevel: z.string().optional(),
+  status: z.string().optional(),
+  stepFree: z.boolean().optional(),
   timestamp: z.number().optional(),
 });
 

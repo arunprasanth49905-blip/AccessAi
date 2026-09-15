@@ -58,6 +58,12 @@ export class GeminiProvider implements IAssistantProvider, IVisionProvider {
     const ocrText = ocr?.text || request.context?.lastOcrText || null;
     const destination = navigation?.destination || request.context?.activeRoute || null;
     const currentStep = navigation?.currentStep || null;
+    const nextStep = navigation?.nextStep || null;
+    const distanceToNext = navigation?.distanceToNext || null;
+    const distanceRemaining = navigation?.distanceRemaining || null;
+    const isOffRoute = Boolean(navigation?.isOffRoute);
+    const routeSource = navigation?.routeSource || 'unknown';
+    const accuracyLevel = navigation?.accuracyLevel || 'unknown';
     const activeWarnings = safety?.activeWarnings || [];
     const riskDetected = Boolean(safety?.riskDetected || vision?.riskDetected);
     const safetyMessage = safety?.latestRisk || vision?.safetyMessage || null;
@@ -67,7 +73,7 @@ export class GeminiProvider implements IAssistantProvider, IVisionProvider {
     const queryLower = request.text.toLowerCase();
     const hasExplicitSignMention = queryLower.includes('sign') || queryLower.includes('text') || queryLower.includes('document') || queryLower.includes('read') || queryLower.includes('say') || queryLower.includes('written');
     const hasExplicitSceneMention = queryLower.includes('see') || queryLower.includes('look') || queryLower.includes('around') || queryLower.includes('front') || queryLower.includes('ahead') || queryLower.includes('door') || queryLower.includes('room');
-    const hasExplicitNavMention = queryLower.includes('route') || queryLower.includes('where') || queryLower.includes('go') || queryLower.includes('destination') || queryLower.includes('step');
+    const hasExplicitNavMention = queryLower.includes('route') || queryLower.includes('where') || queryLower.includes('go') || queryLower.includes('destination') || queryLower.includes('step') || queryLower.includes('turn') || queryLower.includes('next') || queryLower.includes('repeat') || queryLower.includes('far');
     const hasFollowUpMention = queryLower.includes('that') || queryLower.includes('this') || queryLower.includes('it') || queryLower.includes('how far');
 
     const isVisionFresh = vision?.timestamp ? (now - vision.timestamp < 300000) : Boolean(sceneDesc);
@@ -81,19 +87,22 @@ export class GeminiProvider implements IAssistantProvider, IVisionProvider {
     // Strict AccessAI system instructions with cross-feature multimodal context
     const systemInstruction = `You are AccessAI, an intelligent multimodal accessibility companion designed to assist people with visual, hearing, and mobility disabilities.
 Core Principles:
-1. Grounding & Zero Visual Hallucination:
+1. Grounding & Zero Hallucination:
    - If the user asks "What is around me?" or asks to describe surroundings/scene and no visual scene is available in [ACTIVE CONTEXT], state clearly: "I need a camera image or scene information to describe your surroundings. Please open the Camera view to capture a frame."
    - Never invent visual features, objects, distances, or camera details not supported by observed evidence.
+   - Never fabricate routes, roads, turns, or coordinates. Only answer navigation questions using provided route facts.
 2. Cross-Feature Multimodal Reasoning:
    - [ACTIVE CONTEXT]:
      * Observed Visual Scene: ${relevantScene ? `${relevantScene} (Identified objects: ${detectedObjects.length > 0 ? detectedObjects.join(', ') : 'None specified'})` : 'None currently available'}
      * Observed Text / Sign (OCR): ${relevantOcr ? `"${relevantOcr}" (Detected Language: ${ocr?.detectedLanguage || 'en'}${ocr?.simplifiedText ? `, Plain: ${ocr.simplifiedText}` : ''})` : 'None currently available'}
-     * Active Navigation Route: ${relevantNav ? `Destination: ${relevantNav}${currentStep ? `, Current Step: ${currentStep}` : ''}` : 'None currently active'}
+     * Active Navigation Route: ${relevantNav ? `Destination: ${relevantNav}${currentStep ? ` | Current: ${currentStep}` : ''}${nextStep ? ` | Next: ${nextStep}` : ''}${distanceToNext ? ` | Distance to next turn: ${distanceToNext}` : ''}${distanceRemaining ? ` | Remaining: ${distanceRemaining}` : ''} [Source: ${routeSource}, Accuracy: ${accuracyLevel}${isOffRoute ? ', OFF-ROUTE DETECTED' : ', On Route'}]` : 'None currently active'}
      * Safety Hazard State: ${riskDetected ? `Warning: ${safetyMessage || 'Potential hazard noted'}${activeWarnings.length > 0 ? ` [Warnings: ${activeWarnings.join('; ')}]` : ''}` : 'No immediate hazard reported'}
    - Combine contexts intelligently:
+     * If the user asks "How far?", "Where am I going?", or "What is the next turn?": answer clearly and concisely using the Active Navigation Route facts.
+     * If the user is marked OFF-ROUTE: inform them that they appear to have departed from the planned path and suggest re-orienting or waiting for recalculation.
      * If the user asks about entering a door or walkway and a restricted sign (such as "STAFF ONLY" or "NO ENTRY") is in the OCR context: point out the door, highlight what the sign says, and advise caution regarding unauthorized access.
-     * If the user asks "Where should I go?" after reading a directional sign: use the text on the sign to guide their direction.
-     * If the user asks "How far is it?" or "Is that safe?" follow up on the entities discussed in the recent conversation turns.
+     * If the route indicates a turn or door ahead but the camera observes stairs or an obstruction: mention the route instruction but clearly caution them about the observed physical feature.
+     * For road crossings: never say "Cross now" based purely on route geometry. Say: "Crossing information is not currently verified. Check traffic conditions before crossing."
 3. Safety: Never claim that a path or surface is 100% definitely safe or clear. For any obstacle, hazard, or movement inquiry, communicate uncertainty and advise: "Please verify before moving."
 4. Accessibility Profile:
    - simplifiedMode: ${isSimplified ? 'YES. Use short, simple, plain language sentences with direct guidance. Avoid jargon.' : 'NO. Use natural, supportive, conversational tone.'}

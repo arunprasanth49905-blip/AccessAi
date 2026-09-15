@@ -29,8 +29,14 @@ export interface BackendVoiceContext {
   navigation?: {
     destination?: string;
     currentStep?: string;
-    stepFree?: boolean;
+    nextStep?: string;
     distanceRemaining?: string;
+    distanceToNext?: string;
+    isOffRoute?: boolean;
+    routeSource?: string;
+    accuracyLevel?: string;
+    status?: string;
+    stepFree?: boolean;
     timestamp?: number;
   };
   safety?: {
@@ -400,6 +406,30 @@ class ApiService {
       return [];
     }
   }
+
+  // Resolve place, address, coordinates, or indoor waypoint
+  async resolveNavigationPlace(query: string, userCoords?: BackendGeoCoordinates): Promise<BackendResolvedPlace[]> {
+    const url = `${this.getBaseUrl()}/api/navigation/resolve-place`;
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify({ query, userCoords }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        return data.places || [];
+      }
+      return [];
+    } catch {
+      return [];
+    }
+  }
 }
 
 export interface OcrRegion {
@@ -470,11 +500,26 @@ export interface BackendNavStep {
   id: string;
   instruction: string;
   detail: string;
-  nodeType: 'start' | 'ramp' | 'elevator' | 'door' | 'hallway' | 'destination';
+  nodeType:
+    | 'start'
+    | 'ramp'
+    | 'elevator'
+    | 'door'
+    | 'hallway'
+    | 'destination'
+    | 'turn-left'
+    | 'turn-right'
+    | 'continue'
+    | 'crosswalk';
   distance: string;
   distanceMeters: number;
   isAccessible: boolean;
   audioAnnouncement: string;
+  streetName?: string;
+  maneuver?: string;
+  sequence?: number;
+  location?: [number, number];
+  accessibilityNotes?: string;
 }
 
 export interface BackendNavigationPreferences {
@@ -487,9 +532,16 @@ export interface BackendNavigationPreferences {
   minimizeWalking?: boolean;
 }
 
+export interface BackendGeoCoordinates {
+  latitude: number;
+  longitude: number;
+}
+
 export interface BackendNavigationRouteRequest {
   origin?: string;
+  originCoords?: BackendGeoCoordinates;
   destination: string;
+  destinationCoords?: BackendGeoCoordinates;
   preferences?: Partial<BackendNavigationPreferences>;
   accessibilityProfile?: {
     textSize?: string;
@@ -503,17 +555,33 @@ export interface BackendNavigationRouteResponse {
   destination: string;
   destinationName: string;
   originName: string;
+  originCoords?: BackendGeoCoordinates;
+  destinationCoords?: BackendGeoCoordinates;
   distanceMeters: number;
   durationMinutes: number;
   stepFree: boolean;
+  accessibilityStatus: 'verified_step_free' | 'contains_stairs' | 'accessibility_unknown';
+  accessibilityNotes?: string;
   steps: BackendNavStep[];
   features: string[];
   tactilePaving: boolean;
   crowdLevel: 'low' | 'moderate' | 'busy';
   lighting: 'bright' | 'adequate';
-  source: 'accessible-routing-engine' | 'ai';
-  gpsAvailable: false;
+  source: 'osrm-pedestrian' | 'accessible-routing-engine' | 'demo' | 'unknown';
+  geometry?: [number, number][];
+  gpsAvailable: boolean;
   disclaimer: string;
+}
+
+export interface BackendResolvedPlace {
+  id: string;
+  name: string;
+  formattedAddress: string;
+  latitude: number;
+  longitude: number;
+  type: 'indoor-waypoint' | 'place' | 'address' | 'coordinate';
+  isAccessibleVerified: boolean;
+  distanceMeters?: number;
 }
 
 export const apiService = new ApiService();

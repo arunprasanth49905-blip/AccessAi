@@ -187,8 +187,14 @@ export const VoiceAssistantPage: React.FC = () => {
           ? {
               destination: sharedContext.navigation.destination,
               currentStep: sharedContext.navigation.currentStep,
-              stepFree: sharedContext.navigation.stepFree,
+              nextStep: sharedContext.navigation.nextStep,
               distanceRemaining: sharedContext.navigation.distanceRemaining,
+              distanceToNext: sharedContext.navigation.distanceToNext,
+              isOffRoute: sharedContext.navigation.isOffRoute,
+              routeSource: sharedContext.navigation.routeSource,
+              accuracyLevel: sharedContext.navigation.accuracyLevel,
+              status: sharedContext.navigation.status,
+              stepFree: sharedContext.navigation.stepFree,
               timestamp: sharedContext.navigation.updatedAt,
             }
           : undefined,
@@ -405,9 +411,23 @@ export const VoiceAssistantPage: React.FC = () => {
             )}
 
             {hasActiveNav && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-200 font-medium">
-                <Navigation className="w-3 h-3" />
+              <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-medium ${
+                sharedContext.navigation?.isOffRoute
+                  ? 'bg-amber-100 dark:bg-amber-950 text-amber-900 dark:text-amber-200 border border-amber-300 dark:border-amber-800'
+                  : 'bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-200'
+              }`}>
+                <Navigation className="w-3 h-3 shrink-0" />
                 <span>To: {sharedContext.navigation?.destination || 'Active'}</span>
+                {sharedContext.navigation?.isOffRoute && (
+                  <span className="text-[10px] uppercase font-black px-1.5 py-0.5 rounded bg-amber-500 text-white animate-pulse">
+                    Off Route
+                  </span>
+                )}
+                {sharedContext.navigation?.nextStep && (
+                  <span className="text-[11px] opacity-75 hidden md:inline">
+                    • Next: {sharedContext.navigation.nextStep.slice(0, 20)}...
+                  </span>
+                )}
                 <button
                   type="button"
                   onClick={() => clearFeatureContext('navigation')}

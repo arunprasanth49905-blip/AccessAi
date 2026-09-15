@@ -2,13 +2,20 @@ import {
   NavigationRouteRequest,
   NavigationRouteResponse,
   NavStep,
+  ResolvedPlace,
+  ResolvePlaceRequest,
 } from '../types/navigation.types.js';
+import {
+  osrmRoutingProvider,
+  calculateHaversineDistance,
+} from './providers/routing.provider.js';
 
 interface GraphNode {
   id: string;
   name: string;
   type: 'start' | 'ramp' | 'elevator' | 'door' | 'hallway' | 'destination';
   detail: string;
+  coords?: { latitude: number; longitude: number };
 }
 
 interface GraphEdge {
@@ -232,7 +239,7 @@ const EDGES: GraphEdge[] = [
   },
 ];
 
-// Add symmetric reverse edges for bidirectional indoor transit
+// Bidirectional edges
 const ALL_EDGES: GraphEdge[] = [...EDGES];
 for (const edge of EDGES) {
   ALL_EDGES.push({
@@ -265,9 +272,61 @@ export class NavigationService {
   }
 
   /**
-   * Calculates optimal accessible route based on user preferences and constraints
+   * Resolves places from indoor waypoints, explicit coordinates, or OSM Nominatim
    */
-  calculateRoute(request: NavigationRouteRequest): NavigationRouteResponse {
+  async resolvePlace(request: ResolvePlaceRequest): Promise<ResolvedPlace[]> {
+    const query = request.query.toLowerCase().trim();
+    if (!query) return [];
+
+    const results: ResolvedPlace[] = [];
+
+    // Check indoor destinations
+    for (const [id, node] of Object.entries(NODES)) {
+      if (
+        node.name.toLowerCase().includes(query) ||
+        node.detail.toLowerCase().includes(query) ||
+        id.includes(query)
+      ) {
+        results.push({
+          id,
+          name: node.name,
+          formattedAddress: `Indoor Campus: ${node.detail}`,
+          latitude: 0,
+          longitude: 0,
+          type: 'indoor-waypoint',
+          isAccessibleVerified: true,
+          distanceMeters: undefined,
+        });
+      }
+    }
+
+    // Also query external OpenStreetMap Nominatim for real-world places/addresses
+    const outdoorPlaces = await osrmRoutingProvider.resolvePlace(request.query, request.userCoords);
+    for (const p of outdoorPlaces) {
+      results.push(p);
+    }
+
+    return results;
+  }
+
+  /**
+   * Calculates optimal accessible route based on user preferences and constraints
+   * Dispatches to real OSRM routing when coordinates exist, or indoor accessible Dijkstra solver
+   */
+  async calculateRoute(request: NavigationRouteRequest): Promise<NavigationRouteResponse> {
+    // 1. If real-world GPS coordinates are supplied, use real OSRM pedestrian routing
+    if (request.originCoords && request.destinationCoords) {
+      const realRoute = await osrmRoutingProvider.calculateRoute(request);
+      if (realRoute) {
+        return realRoute;
+      }
+    }
+
+    // 2. Indoor Dijkstra graph solver for campus waypoints or fallback
+    return this.calculateIndoorRoute(request);
+  }
+
+  private calculateIndoorRoute(request: NavigationRouteRequest): NavigationRouteResponse {
     const origin = request.origin || 'main-entrance';
     const destination = request.destination;
 
@@ -297,7 +356,6 @@ export class NavigationService {
     distances[startNode] = 0;
 
     while (unvisited.size > 0) {
-      // Find unvisited node with smallest distance
       let current: string | null = null;
       let smallestDist = Infinity;
 
@@ -313,31 +371,25 @@ export class NavigationService {
 
       unvisited.delete(current);
 
-      // Inspect outgoing edges
       const neighbors = ALL_EDGES.filter((e) => e.from === current && unvisited.has(e.to));
 
       for (const edge of neighbors) {
-        // Base edge cost is distance in meters
         let cost = edge.distanceMeters;
 
-        // Severe penalty for stairs if avoidStairs is on
         if (edge.hasStairs) {
           if (avoidStairs) {
             cost += 100000; // Impassable
           } else {
-            cost += 50; // High resistance
+            cost += 50;
           }
         }
 
-        // Ramps and elevators preferences
         if (edge.hasRamp && preferRamps) {
-          cost *= 0.8; // Encouraged
+          cost *= 0.8;
         }
         if (edge.hasElevator && preferElevators) {
-          cost *= 0.7; // Highly encouraged for multi-level
+          cost *= 0.7;
         }
-
-        // Crowd and lighting preferences
         if (avoidCrowds && edge.crowdLevel === 'busy') {
           cost += 25;
         }
@@ -364,17 +416,13 @@ export class NavigationService {
       curr = prevInfo.node;
     }
 
-    // If no path found or trivial destination
     if (pathEdges.length === 0 && startNode !== destination) {
-      // Fallback deterministic direct route
       return this.buildFallbackRoute(destination, avoidStairs);
     }
 
-    // Build NavSteps
     let totalMeters = 0;
     const steps: NavStep[] = [];
 
-    // Step 0: Start node
     steps.push({
       id: 'step-0',
       instruction: `Start from ${NODES[startNode]?.name || 'current location'}`,
@@ -383,7 +431,7 @@ export class NavigationService {
       distance: '0 m',
       distanceMeters: 0,
       isAccessible: true,
-      audioAnnouncement: `Start from ${NODES[startNode]?.name}. Follow the tactile guiding line on the floor.`,
+      audioAnnouncement: `Start from ${NODES[startNode]?.name || 'current location'}. Follow the tactile guiding line on the floor.`,
     });
 
     let stepIdx = 1;
@@ -415,11 +463,12 @@ export class NavigationService {
       distanceMeters: totalMeters,
       durationMinutes,
       stepFree: isStepFree,
+      accessibilityStatus: isStepFree ? 'verified_step_free' : 'contains_stairs',
       steps,
       features: [
-        isStepFree ? '100% Step-Free Route' : 'Route Contains Stairs',
+        isStepFree ? '100% Step-Free Verified' : 'Route Contains Stairs',
         'Continuous Tactile Paving',
-        'Audio Announcements',
+        'Auditory Waypoint Announcements',
         'Dual-Height Handrails Verified',
       ],
       tactilePaving: true,
@@ -440,6 +489,7 @@ export class NavigationService {
       distanceMeters: 90,
       durationMinutes: 1.5,
       stepFree,
+      accessibilityStatus: stepFree ? 'verified_step_free' : 'contains_stairs',
       steps: [
         {
           id: 'step-0',
@@ -472,7 +522,7 @@ export class NavigationService {
           audioAnnouncement: `You have arrived at ${destName}.`,
         },
       ],
-      features: ['Step-Free', 'Tactile Paving', 'Audio Guidance'],
+      features: ['Step-Free Verified', 'Tactile Paving', 'Audio Guidance'],
       tactilePaving: true,
       crowdLevel: 'low',
       lighting: 'bright',

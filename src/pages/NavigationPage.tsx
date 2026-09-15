@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Compass,
   Search,
@@ -14,20 +14,31 @@ import {
   Square,
   Info,
   Layers,
+  MapPin,
+  Locate,
+  AlertTriangle,
+  Loader2,
+  Navigation,
 } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { AccessibleButton } from '../components/common/AccessibleButton';
-import { navigationService, DestinationOption } from '../services/navigationService';
+import {
+  navigationService,
+  DestinationOption,
+  NavigationStateMachineState,
+} from '../services/navigationService';
+import { geolocationService, LocationState } from '../services/geolocationService';
 import { speechService } from '../services/speechService';
 import { audioFeedback } from '../services/audioFeedbackService';
 import { useAssistant } from '../context/AssistantContext';
 import { useAccessibility } from '../context/AccessibilityContext';
 import { AccessibleRoute } from '../types';
-
-type NavState = 'idle' | 'navigating' | 'paused' | 'completed';
+import { BackendResolvedPlace } from '../services/apiService';
+import { RouteMapSvg } from '../components/navigation/RouteMapSvg';
 
 export const NavigationPage: React.FC = () => {
-  const { showToast, addAssistanceItem, updateNavigationContext, updateNavigationState, setCurrentFeature } = useAssistant();
+  const { showToast, addAssistanceItem, updateNavigationContext, updateNavigationState, setCurrentFeature } =
+    useAssistant();
   const { settings } = useAccessibility();
 
   // Set current feature in unified context
@@ -36,8 +47,9 @@ export const NavigationPage: React.FC = () => {
   }, [setCurrentFeature]);
 
   // Navigation State Machine
-  const [navState, setNavState] = useState<NavState>('idle');
+  const [navState, setNavState] = useState<NavigationStateMachineState>('idle');
   const [selectedRouteKey, setSelectedRouteKey] = useState<string>('accessible-entrance');
+  const [selectedPlace, setSelectedPlace] = useState<BackendResolvedPlace | null>(null);
   const [activeRoute, setActiveRoute] = useState<AccessibleRoute>(() =>
     navigationService.calculateLocalRoute('accessible-entrance', {
       avoidStairs: true,
@@ -46,8 +58,22 @@ export const NavigationPage: React.FC = () => {
     })
   );
   const [activeStepIndex, setActiveStepIndex] = useState(0);
-  const [searchQuery, setSearchQuery] = useState('');
   const [isVoiceGuidanceActive, setIsVoiceGuidanceActive] = useState(true);
+  const [isCalculatingRoute, setIsCalculatingRoute] = useState(false);
+  const [isOffRoute, setIsOffRoute] = useState(false);
+  const [offRouteDistance, setOffRouteDistance] = useState<number | null>(null);
+
+  // Search & Places State
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<BackendResolvedPlace[]>([]);
+  const [isSearchingPlaces, setIsSearchingPlaces] = useState(false);
+  const [isSearchDropdownOpen, setIsSearchDropdownOpen] = useState(false);
+  const searchDebounceRef = useRef<NodeJS.Timeout | null>(null);
+
+  // GPS & Location Mode State
+  const [userLocation, setUserLocation] = useState<LocationState | null>(null);
+  const [useDeviceGps, setUseDeviceGps] = useState(false);
+  const [isLocating, setIsLocating] = useState(false);
 
   // Accessible Routing Preferences
   const [avoidStairs, setAvoidStairs] = useState(true);
@@ -56,87 +82,232 @@ export const NavigationPage: React.FC = () => {
   const [avoidCrowds, setAvoidCrowds] = useState(false);
   const [preferWellLit, setPreferWellLit] = useState(true);
 
-  // Recalculate route whenever destination or preferences change
+  // Update speech preferences on navigation service
   useEffect(() => {
-    let mounted = true;
+    navigationService.setAccessibilityOptions({
+      voiceGuidance: isVoiceGuidanceActive && settings.voiceGuidance,
+      simplifiedMode: settings.simplifiedMode,
+      language: settings.language,
+    });
+  }, [isVoiceGuidanceActive, settings.voiceGuidance, settings.simplifiedMode, settings.language]);
 
-    async function loadRoute() {
-      const computed = await navigationService.calculateRoute(selectedRouteKey, {
+  // Place Search Autocomplete with debounce
+  useEffect(() => {
+    if (!searchQuery.trim() || searchQuery.length < 2) {
+      setSearchResults([]);
+      setIsSearchingPlaces(false);
+      return;
+    }
+
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
+    }
+
+    setIsSearchingPlaces(true);
+    searchDebounceRef.current = setTimeout(async () => {
+      try {
+        const coords = userLocation?.coords
+          ? { latitude: userLocation.coords.latitude, longitude: userLocation.coords.longitude }
+          : undefined;
+        const places = await navigationService.resolvePlace(searchQuery, coords);
+        setSearchResults(places);
+        setIsSearchDropdownOpen(true);
+      } catch {
+        setSearchResults([]);
+      } finally {
+        setIsSearchingPlaces(false);
+      }
+    }, 350);
+
+    return () => {
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current);
+      }
+    };
+  }, [searchQuery, userLocation]);
+
+  // Toggle Device GPS Location
+  const handleToggleGps = async () => {
+    audioFeedback.playClick();
+    if (!useDeviceGps) {
+      setIsLocating(true);
+      showToast('Acquiring GPS', 'Requesting device geolocation for real-world navigation...', 'info');
+      try {
+        const loc = await geolocationService.getCurrentPosition({ enableHighAccuracy: true });
+        setUserLocation(loc);
+        if (loc.coords && loc.source === 'device') {
+          setUseDeviceGps(true);
+          showToast(
+            'GPS Active',
+            `Location locked (Accuracy: ±${Math.round(loc.coords.accuracy)}m). Routing will now use your coordinates.`,
+            'success'
+          );
+        } else if (loc.error) {
+          showToast('Location Notice', loc.error, 'warning');
+        }
+      } catch {
+        showToast('Location Unavailable', 'Could not obtain device GPS. Using indoor concourse anchor.', 'warning');
+      } finally {
+        setIsLocating(false);
+      }
+    } else {
+      setUseDeviceGps(false);
+      showToast('Indoor Mode Active', 'Routing anchored to Main Entrance Concourse.', 'info');
+    }
+  };
+
+  // Recalculate route whenever destination, place, GPS mode, or preferences change
+  const fetchRoute = useCallback(async () => {
+    setIsCalculatingRoute(true);
+
+    try {
+      const destinationKey = selectedPlace ? selectedPlace.formattedAddress || selectedPlace.name : selectedRouteKey;
+      const originCoords = useDeviceGps && userLocation?.coords
+        ? { latitude: userLocation.coords.latitude, longitude: userLocation.coords.longitude }
+        : undefined;
+      const destinationCoords = selectedPlace
+        ? { latitude: selectedPlace.latitude, longitude: selectedPlace.longitude }
+        : undefined;
+
+      const computed = await navigationService.calculateRoute(
+        destinationKey,
+        {
+          avoidStairs,
+          preferRamps,
+          preferElevators,
+          avoidCrowds,
+          preferWellLit,
+        },
+        useDeviceGps ? 'Current Location' : 'main-entrance',
+        {
+          originCoords,
+          destinationCoords,
+        }
+      );
+
+      setActiveRoute(computed);
+      if (navState === 'idle') {
+        setActiveStepIndex(0);
+      }
+    } catch {
+      // Fallback local route if calculation fails
+      const fallback = navigationService.calculateLocalRoute(selectedRouteKey, {
         avoidStairs,
         preferRamps,
         preferElevators,
         avoidCrowds,
         preferWellLit,
       });
-
-      if (mounted) {
-        setActiveRoute(computed);
-        if (navState === 'idle') {
-          setActiveStepIndex(0);
-        }
-      }
+      setActiveRoute(fallback);
+    } finally {
+      setIsCalculatingRoute(false);
     }
+  }, [
+    selectedRouteKey,
+    selectedPlace,
+    useDeviceGps,
+    userLocation,
+    avoidStairs,
+    preferRamps,
+    preferElevators,
+    avoidCrowds,
+    preferWellLit,
+    navState,
+  ]);
 
-    loadRoute();
+  useEffect(() => {
+    fetchRoute();
+  }, [fetchRoute]);
 
-    return () => {
-      mounted = false;
-    };
-  }, [selectedRouteKey, avoidStairs, preferRamps, preferElevators, avoidCrowds, preferWellLit, navState]);
-
-  // Sync with Assistant Context whenever active waypoint or destination changes
+  // Sync with Assistant Context whenever active waypoint or route changes
   useEffect(() => {
     if (activeRoute && activeRoute.steps[activeStepIndex]) {
-      const step = activeRoute.steps[activeStepIndex];
-      updateNavigationState(
-        activeRoute.destination,
-        step.instruction,
-        {
-          stepFree: activeRoute.stepFree,
-          distanceRemaining: `${activeRoute.distanceMeters}m`,
-        }
-      );
-      updateNavigationContext(
-        activeRoute.destination,
-        step.instruction
-      );
-    }
-  }, [activeRoute, activeStepIndex, updateNavigationContext, updateNavigationState]);
+      const currentStep = activeRoute.steps[activeStepIndex];
+      const nextStep = activeRoute.steps[activeStepIndex + 1];
 
-  // Clean up speech on unmount
+      updateNavigationState(activeRoute.destination, currentStep.instruction, {
+        stepFree: activeRoute.stepFree,
+        distanceRemaining: `${activeRoute.distanceMeters}m`,
+        nextStep: nextStep ? nextStep.instruction : undefined,
+        distanceToNext: nextStep ? nextStep.distance : undefined,
+        isOffRoute,
+        routeSource: activeRoute.source || 'osrm-pedestrian',
+        accuracyLevel: userLocation?.accuracyLevel || 'high',
+        status: navState,
+      });
+
+      updateNavigationContext(activeRoute.destination, currentStep.instruction);
+    }
+  }, [
+    activeRoute,
+    activeStepIndex,
+    isOffRoute,
+    navState,
+    userLocation,
+    updateNavigationContext,
+    updateNavigationState,
+  ]);
+
+  // Clean up navigation and speech on unmount
   useEffect(() => {
     return () => {
+      navigationService.stopNavigation();
       speechService.stop();
     };
   }, []);
 
   const destinations: DestinationOption[] = navigationService.getAvailableDestinations();
 
-  const filteredDestinations = destinations.filter((d) =>
-    d.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    d.description.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-
-  const handleSelectDestination = (key: string) => {
+  const handleSelectIndoorDestination = (key: string) => {
     audioFeedback.playClick();
     setSelectedRouteKey(key);
+    setSelectedPlace(null);
+    setSearchQuery('');
+    setIsSearchDropdownOpen(false);
     setNavState('idle');
     setActiveStepIndex(0);
+    setIsOffRoute(false);
     showToast('Destination Selected', `Route plan updated for ${key}.`, 'info');
   };
 
-  // State Machine Controls
+  const handleSelectPlaceResult = (place: BackendResolvedPlace) => {
+    audioFeedback.playSuccess();
+    setSelectedPlace(place);
+    setSelectedRouteKey(place.id);
+    setSearchQuery(place.name);
+    setIsSearchDropdownOpen(false);
+    setNavState('idle');
+    setActiveStepIndex(0);
+    setIsOffRoute(false);
+    showToast('Destination Set', `Routing to ${place.name} (${place.formattedAddress})`, 'success');
+  };
+
+  // State Machine Handlers
   const handleStartRoute = () => {
     audioFeedback.playSuccess();
-    setNavState('navigating');
     setActiveStepIndex(0);
+    setIsOffRoute(false);
 
-    const firstStep = activeRoute.steps[0];
-    const announcement = `Starting navigation to ${activeRoute.destination}. Total distance is ${activeRoute.distanceMeters} meters. ${firstStep?.audioAnnouncement || ''}`;
-
-    if (isVoiceGuidanceActive && settings.voiceGuidance) {
-      speechService.speak(announcement, { rate: settings.speechSpeed });
-    }
+    navigationService.startNavigation(activeRoute, {
+      onStateChange: (state) => {
+        setNavState(state);
+      },
+      onStepAdvance: (index) => {
+        setActiveStepIndex(index);
+      },
+      onLocationUpdate: (loc) => {
+        setUserLocation(loc);
+      },
+      onOffRouteDetected: (distance) => {
+        setIsOffRoute(true);
+        setOffRouteDistance(distance);
+        showToast('Off Route Alert', `User is ${distance}m away from the planned path.`, 'warning');
+      },
+      onArrival: () => {
+        setNavState('arrived');
+        showToast('Destination Reached', `You have arrived at ${activeRoute.destination}.`, 'success');
+      },
+    });
 
     showToast('Navigation Started', `Heading to ${activeRoute.destination}`, 'success');
 
@@ -151,74 +322,40 @@ export const NavigationPage: React.FC = () => {
 
   const handlePauseRoute = () => {
     audioFeedback.playClick();
+    navigationService.pauseNavigation();
     setNavState('paused');
-    speechService.stop();
     showToast('Navigation Paused', 'Press Resume to continue route guidance.', 'info');
   };
 
   const handleResumeRoute = () => {
     audioFeedback.playClick();
+    navigationService.resumeNavigation();
     setNavState('navigating');
-    const currentStep = activeRoute.steps[activeStepIndex];
-    if (isVoiceGuidanceActive && settings.voiceGuidance && currentStep) {
-      speechService.speak(`Resuming guidance. ${currentStep.audioAnnouncement}`, {
-        rate: settings.speechSpeed,
-      });
-    }
     showToast('Navigation Resumed', 'Route guidance active.', 'info');
   };
 
   const handleNextStep = () => {
-    if (activeStepIndex < activeRoute.steps.length - 1) {
-      audioFeedback.playClick();
-      const nextIndex = activeStepIndex + 1;
-      setActiveStepIndex(nextIndex);
-
-      const nextStep = activeRoute.steps[nextIndex];
-      if (isVoiceGuidanceActive && settings.voiceGuidance && nextStep) {
-        speechService.speak(nextStep.audioAnnouncement, { rate: settings.speechSpeed });
-      }
-
-      // If reached final step
-      if (nextIndex === activeRoute.steps.length - 1) {
-        setNavState('completed');
-        audioFeedback.playSuccess();
-        showToast('Destination Reached', `You have arrived at ${activeRoute.destination}.`, 'success');
-      }
-    }
+    audioFeedback.playClick();
+    navigationService.nextStep();
   };
 
   const handlePreviousStep = () => {
-    if (activeStepIndex > 0) {
-      audioFeedback.playClick();
-      const prevIndex = activeStepIndex - 1;
-      setActiveStepIndex(prevIndex);
-      setNavState('navigating');
-
-      const prevStep = activeRoute.steps[prevIndex];
-      if (isVoiceGuidanceActive && settings.voiceGuidance && prevStep) {
-        speechService.speak(prevStep.audioAnnouncement, { rate: settings.speechSpeed });
-      }
-    }
+    audioFeedback.playClick();
+    navigationService.previousStep();
   };
 
   const handleRestartRoute = () => {
     audioFeedback.playClick();
-    setActiveStepIndex(0);
-    setNavState('navigating');
-    const firstStep = activeRoute.steps[0];
-    if (isVoiceGuidanceActive && settings.voiceGuidance && firstStep) {
-      speechService.speak(firstStep.audioAnnouncement, { rate: settings.speechSpeed });
-    }
-    showToast('Route Restarted', 'Beginning guidance from step 1.', 'info');
+    handleStartRoute();
   };
 
   const handleStopRoute = () => {
     audioFeedback.playClick();
-    speechService.stop();
+    navigationService.stopNavigation();
     setNavState('idle');
     setActiveStepIndex(0);
-    showToast('Navigation Stopped', 'Route ended.', 'info');
+    setIsOffRoute(false);
+    showToast('Navigation Stopped', 'Route guidance ended.', 'info');
   };
 
   const handleSpeakSingleStep = (announcement: string) => {
@@ -228,22 +365,11 @@ export const NavigationPage: React.FC = () => {
 
   const currentStep = activeRoute.steps[activeStepIndex] || activeRoute.steps[0];
   const nextStep = activeRoute.steps[activeStepIndex + 1] || null;
-  const progressPercent = Math.round(((activeStepIndex + 1) / activeRoute.steps.length) * 100);
-
-  // Coordinate nodes for SVG map rendering
-  const mapNodePositions: Record<string, { x: number; y: number; label: string }> = {
-    'accessible-entrance': { x: 230, y: 60, label: 'Main Entrance' },
-    'accessible-restroom': { x: 240, y: 150, label: 'Restroom' },
-    'elevator-bank-b': { x: 150, y: 140, label: 'Elevator B' },
-    'classroom-204': { x: 150, y: 50, label: 'Classroom 204' },
-    'cafeteria': { x: 60, y: 60, label: 'Cafeteria' },
-  };
-
-  const destCoords = mapNodePositions[selectedRouteKey] || { x: 230, y: 60, label: 'Destination' };
+  const progressPercent = Math.round(((activeStepIndex + 1) / Math.max(1, activeRoute.steps.length)) * 100);
 
   return (
     <PageContainer maxWidth="xl" className="space-y-6">
-      {/* Header with Title & Voice Guidance Toggle */}
+      {/* Header with Title, GPS Location Switch, & Voice Guidance Toggle */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-50 dark:bg-amber-950/70 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300 text-xs font-bold mb-1">
@@ -251,11 +377,27 @@ export const NavigationPage: React.FC = () => {
             <span>NAVIGATE • Accessible & Step-Free Routing</span>
           </div>
           <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-slate-100">
-            Accessible Indoor Navigation
+            Accessible Real-World & Indoor Navigation
           </h2>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          {/* Real GPS Location Toggle Button */}
+          <AccessibleButton
+            variant={useDeviceGps ? 'secondary' : 'outline'}
+            size="md"
+            icon={isLocating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Locate className="w-4 h-4" />}
+            onClick={handleToggleGps}
+            title="Toggle real device geolocation for outdoor walking navigation"
+          >
+            {useDeviceGps
+              ? userLocation?.coords
+                ? `GPS Active (±${Math.round(userLocation.coords.accuracy)}m)`
+                : 'GPS Active'
+              : 'Use Device GPS'}
+          </AccessibleButton>
+
+          {/* Voice Guidance Toggle */}
           <AccessibleButton
             variant={isVoiceGuidanceActive ? 'primary' : 'outline'}
             size="md"
@@ -266,47 +408,91 @@ export const NavigationPage: React.FC = () => {
               if (isVoiceGuidanceActive) speechService.stop();
             }}
           >
-            {isVoiceGuidanceActive ? 'Voice Guidance ON' : 'Voice Guidance Muted'}
+            {isVoiceGuidanceActive ? 'Voice ON' : 'Voice Muted'}
           </AccessibleButton>
         </div>
       </div>
 
-      {/* GPS Transparency Notice Banner */}
+      {/* Real-time Status Notice Banner */}
       <div className="p-4 rounded-2xl bg-slate-100 dark:bg-slate-800/80 border border-slate-300 dark:border-slate-700 flex items-start sm:items-center justify-between gap-3 text-xs sm:text-sm text-slate-700 dark:text-slate-300">
         <div className="flex items-center gap-2.5">
           <Info className="w-4 h-4 text-brand-600 shrink-0" />
           <span>
-            <strong>Indoor Structured Waypoints:</strong> GPS is unavailable indoors. AccessAI guides you via verified physical landmarks, tactile paving lines, and audible beacons.
+            {activeRoute.source === 'osrm-pedestrian' ? (
+              <span>
+                <strong>OSRM Pedestrian Routing:</strong> Step-free real-world path geometry computed from OpenStreetMap data.
+              </span>
+            ) : (
+              <span>
+                <strong>Indoor Waypoints Engine:</strong> Step-free campus route guided by verified tactile paving, ramps, and audio beacons.
+              </span>
+            )}
           </span>
         </div>
         <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 whitespace-nowrap hidden sm:inline">
-          ISO 21542 Accessibility
+          {activeRoute.stepFree ? '100% Step-Free' : 'Pedestrian Path'}
         </span>
       </div>
 
-      {/* Destination Search & Filter Chips */}
-      <div className="space-y-3">
+      {/* Destination Search & Place Autocomplete Bar */}
+      <div className="space-y-3 relative">
         <div className="relative">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search accessible indoor destinations (e.g., Restroom, Elevator, Classroom, Exit)..."
-            className="w-full pl-12 pr-4 py-3.5 rounded-2xl bg-white dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-800 text-base font-medium focus:outline-none focus:border-brand-500 shadow-sm"
+            onFocus={() => {
+              if (searchResults.length > 0) setIsSearchDropdownOpen(true);
+            }}
+            placeholder="Search destination, address, or campus landmark (e.g. Restroom, Library, Central Station)..."
+            className="w-full pl-12 pr-10 py-3.5 rounded-2xl bg-white dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-800 text-base font-medium focus:outline-none focus:border-brand-500 shadow-sm"
           />
+          {isSearchingPlaces && (
+            <Loader2 className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 animate-spin" />
+          )}
         </div>
 
+        {/* Place Autocomplete Dropdown */}
+        {isSearchDropdownOpen && searchResults.length > 0 && (
+          <div className="absolute top-full left-0 right-0 z-30 mt-1 bg-white dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl max-h-72 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
+            {searchResults.map((place) => (
+              <button
+                key={place.id}
+                type="button"
+                onClick={() => handleSelectPlaceResult(place)}
+                className="w-full text-left p-3.5 hover:bg-amber-50 dark:hover:bg-amber-950/40 transition-colors flex items-start gap-3 group"
+              >
+                <MapPin className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0 group-hover:scale-110 transition-transform" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                    <span className="truncate">{place.name}</span>
+                    {place.isAccessibleVerified && (
+                      <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 shrink-0">
+                        Step-Free
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                    {place.formattedAddress}
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Indoor Quick-Select Chips */}
         <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
           <span className="text-xs font-bold text-slate-400 uppercase tracking-wider shrink-0">
-            Destinations:
+            Quick Indoor:
           </span>
-          {filteredDestinations.map((dest) => (
+          {destinations.map((dest) => (
             <button
               key={dest.id}
-              onClick={() => handleSelectDestination(dest.id)}
+              onClick={() => handleSelectIndoorDestination(dest.id)}
               className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold whitespace-nowrap transition-all border ${
-                selectedRouteKey === dest.id
+                selectedRouteKey === dest.id && !selectedPlace
                   ? 'bg-amber-500 text-white border-amber-500 font-bold shadow-md shadow-amber-500/20'
                   : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:bg-slate-50'
               }`}
@@ -317,17 +503,34 @@ export const NavigationPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Navigation State Bar & Progress */}
+      {/* Navigation State Bar & Turn Banner */}
       {navState !== 'idle' && (
-        <div className="p-5 rounded-3xl bg-amber-500 text-white shadow-xl space-y-3 animate-fadeIn">
+        <div
+          className={`p-5 rounded-3xl text-white shadow-xl space-y-3 animate-fadeIn transition-colors ${
+            isOffRoute
+              ? 'bg-rose-600'
+              : navState === 'approaching_turn'
+              ? 'bg-amber-600'
+              : navState === 'arrived'
+              ? 'bg-emerald-600'
+              : 'bg-amber-500'
+          }`}
+        >
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <span className="w-3 h-3 rounded-full bg-white animate-ping" />
               <div>
                 <span className="text-xs uppercase font-extrabold tracking-wider text-amber-100 block">
-                  {navState === 'navigating' && 'Active Navigation Guidance'}
-                  {navState === 'paused' && 'Navigation Guidance Paused'}
-                  {navState === 'completed' && 'Destination Reached'}
+                  {isOffRoute && (
+                    <span className="flex items-center gap-1 text-white">
+                      <AlertTriangle className="w-3.5 h-3.5" />
+                      <span>Off-Route Alert{offRouteDistance ? ` (${offRouteDistance}m from path)` : ' (>45m from path)'}</span>
+                    </span>
+                  )}
+                  {!isOffRoute && navState === 'navigating' && 'Active Turn Guidance'}
+                  {!isOffRoute && navState === 'approaching_turn' && 'Approaching Next Turn'}
+                  {!isOffRoute && navState === 'paused' && 'Navigation Paused'}
+                  {!isOffRoute && navState === 'arrived' && 'Destination Reached'}
                 </span>
                 <h3 className="text-xl sm:text-2xl font-black">
                   {activeRoute.destination}
@@ -443,15 +646,21 @@ export const NavigationPage: React.FC = () => {
 
               <div className="flex items-center gap-2">
                 <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 flex items-center gap-1">
-                  <CheckCircle2 className="w-3.5 h-3.5" /> 100% Step-Free
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  {activeRoute.stepFree ? '100% Step-Free' : 'Pedestrian Path'}
                 </span>
               </div>
             </div>
 
             {/* Instruction detail & Spoken Announcement */}
             <div className="p-4 rounded-2xl bg-amber-50/70 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 space-y-2">
-              <div className="text-xs font-bold uppercase tracking-wider text-amber-800 dark:text-amber-300">
-                Waypoint Guidance:
+              <div className="text-xs font-bold uppercase tracking-wider text-amber-800 dark:text-amber-300 flex items-center justify-between">
+                <span>Waypoint Guidance:</span>
+                {currentStep.streetName && (
+                  <span className="font-mono text-slate-500 text-[11px]">
+                    Street: {currentStep.streetName}
+                  </span>
+                )}
               </div>
               <p className="text-base sm:text-lg font-semibold text-amber-950 dark:text-amber-100 leading-relaxed">
                 "{currentStep.detail}"
@@ -494,13 +703,14 @@ export const NavigationPage: React.FC = () => {
                 variant="primary"
                 size="xl"
                 fullWidth
-                icon={<Play className="w-5 h-5 fill-current" />}
+                icon={isCalculatingRoute ? <Loader2 className="w-5 h-5 animate-spin" /> : <Play className="w-5 h-5 fill-current" />}
                 onClick={handleStartRoute}
+                disabled={isCalculatingRoute}
                 className="shadow-lg shadow-brand-500/25 py-4"
               >
-                START ACCESSIBLE ROUTE
+                {isCalculatingRoute ? 'CALCULATING ACCESSIBLE ROUTE...' : 'START ACCESSIBLE ROUTE'}
               </AccessibleButton>
-            ) : navState === 'completed' ? (
+            ) : navState === 'arrived' ? (
               <AccessibleButton
                 variant="success"
                 size="lg"
@@ -544,7 +754,7 @@ export const NavigationPage: React.FC = () => {
               </span>
             </div>
 
-            <div className="space-y-2.5">
+            <div className="space-y-2.5 max-h-96 overflow-y-auto pr-1">
               {activeRoute.steps.map((step, idx) => {
                 const isActive = activeStepIndex === idx && navState !== 'idle';
                 const isPassed = activeStepIndex > idx && navState !== 'idle';
@@ -585,6 +795,11 @@ export const NavigationPage: React.FC = () => {
                         <div className="text-xs text-slate-500 dark:text-slate-400">
                           {step.detail}
                         </div>
+                        {step.streetName && (
+                          <div className="text-[11px] font-mono text-slate-400">
+                            {step.streetName}
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -609,95 +824,41 @@ export const NavigationPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Right Column: Clean SVG Tactile Floorplan & Preferences */}
+        {/* Right Column: Route Map SVG & Preferences */}
         <div className="lg:col-span-5 space-y-5">
-          {/* Tactile Floorplan Map */}
+          {/* Real-World Geometry or Tactile Floorplan Map */}
           <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-800 shadow-xl space-y-4">
             <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
               <span className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-                <Layers className="w-3.5 h-3.5" />
-                <span>Indoor Floorplan Layout</span>
+                {activeRoute.geometry && activeRoute.geometry.length > 0 ? (
+                  <>
+                    <Navigation className="w-3.5 h-3.5 text-sky-500" />
+                    <span>Real-World GPS Pedestrian Path</span>
+                  </>
+                ) : (
+                  <>
+                    <Layers className="w-3.5 h-3.5 text-amber-500" />
+                    <span>Indoor Architectural Floorplan</span>
+                  </>
+                )}
               </span>
               <span className="text-xs text-emerald-600 font-bold flex items-center gap-1">
-                <CheckCircle2 className="w-3.5 h-3.5" /> Step-Free Certified
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                {activeRoute.stepFree ? 'Step-Free Certified' : 'Verified Route'}
               </span>
             </div>
 
-            {/* Dynamic SVG Map */}
-            <div className="w-full aspect-square rounded-2xl bg-slate-950 p-4 relative overflow-hidden border border-slate-800 flex items-center justify-center">
-              <svg viewBox="0 0 300 300" className="w-full h-full">
-                {/* Architectural Building Outline */}
-                <rect x="20" y="20" width="260" height="260" rx="16" fill="#0f172a" stroke="#1e293b" strokeWidth="2" />
-
-                {/* Primary Hallway Corridors */}
-                <path d="M 50 220 L 250 220" stroke="#334155" strokeWidth="22" strokeLinecap="round" />
-                <path d="M 150 50 L 150 250" stroke="#334155" strokeWidth="22" strokeLinecap="round" />
-                <path d="M 50 60 L 250 60" stroke="#334155" strokeWidth="18" strokeLinecap="round" />
-                <path d="M 50 150 L 250 150" stroke="#334155" strokeWidth="18" strokeLinecap="round" />
-
-                {/* Stairs Node (Avoided - Marked with Red X) */}
-                <rect x="55" y="110" width="35" height="30" rx="6" fill="#450a0a" stroke="#ef4444" strokeWidth="2" />
-                <text x="72" y="128" fill="#ef4444" fontSize="8" fontWeight="bold" textAnchor="middle">STAIRS</text>
-                <line x1="60" y1="115" x2="85" y2="135" stroke="#ef4444" strokeWidth="2" />
-
-                {/* Dynamic Route Line from Origin to Destination */}
-                <path
-                  d={`M 50 220 L 150 220 L 150 140 L ${destCoords.x} ${destCoords.y}`}
-                  fill="none"
-                  stroke="#f59e0b"
-                  strokeWidth="7"
-                  strokeDasharray="6 4"
-                  strokeLinecap="round"
-                  className="animate-pulse"
-                />
-
-                {/* Start Node: You (Main Entrance) */}
-                <circle cx="50" cy="220" r="12" fill="#2563eb" stroke="#ffffff" strokeWidth="2.5" />
-                <text x="50" y="245" fill="#93c5fd" fontSize="10" fontWeight="bold" textAnchor="middle">Start</text>
-
-                {/* Ground Ramp */}
-                <rect x="135" y="205" width="30" height="30" rx="6" fill="#d97706" stroke="#ffffff" strokeWidth="1.5" />
-                <text x="150" y="245" fill="#fcd34d" fontSize="9" fontWeight="bold" textAnchor="middle">Ramp</text>
-
-                {/* Elevator Concourse B */}
-                <rect x="135" y="125" width="30" height="30" rx="6" fill="#7c3aed" stroke="#ffffff" strokeWidth="1.5" />
-                <text x="150" y="115" fill="#c4b5fd" fontSize="9" fontWeight="bold" textAnchor="middle">Elevator B</text>
-
-                {/* Target Destination Node */}
-                <circle cx={destCoords.x} cy={destCoords.y} r="14" fill="#10b981" stroke="#ffffff" strokeWidth="3" />
-                <text x={destCoords.x} y={destCoords.y - 18} fill="#6ee7b7" fontSize="10" fontWeight="black" textAnchor="middle">
-                  {destCoords.label}
-                </text>
-
-                {/* Animated User Waypoint Avatar Marker */}
-                {navState !== 'idle' && (
-                  <circle
-                    cx={
-                      activeStepIndex === 0 ? 50 :
-                      activeStepIndex === 1 ? 150 :
-                      activeStepIndex === 2 ? 150 :
-                      destCoords.x
-                    }
-                    cy={
-                      activeStepIndex === 0 ? 220 :
-                      activeStepIndex === 1 ? 205 :
-                      activeStepIndex === 2 ? 140 :
-                      destCoords.y
-                    }
-                    r="8"
-                    fill="#38bdf8"
-                    stroke="#ffffff"
-                    strokeWidth="2"
-                    className="animate-ping"
-                  />
-                )}
-              </svg>
-
-              <div className="absolute bottom-2 left-2 right-2 bg-black/85 backdrop-blur-sm text-white px-3 py-1.5 rounded-xl text-[10px] flex items-center justify-between">
-                <span>Waypoint Map: {activeRoute.destination}</span>
-                <span className="font-mono text-amber-400 font-bold">100% Step-Free</span>
-              </div>
-            </div>
+            {/* Dynamic SVG Map (Real geometry or Indoor floorplan) */}
+            <RouteMapSvg
+              geometry={activeRoute.geometry}
+              steps={activeRoute.steps}
+              activeStepIndex={activeStepIndex}
+              destinationName={activeRoute.destination}
+              isIndoor={!activeRoute.geometry || activeRoute.geometry.length === 0}
+              selectedIndoorKey={selectedRouteKey}
+              isOffRoute={isOffRoute}
+              userCoords={userLocation?.coords || null}
+            />
           </div>
 
           {/* Accessible Routing Preferences Box */}

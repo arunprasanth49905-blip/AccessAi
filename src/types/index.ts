@@ -127,27 +127,58 @@ export interface OCRSample {
 }
 
 // Navigation Types
+export type NavNodeType =
+  | 'start'
+  | 'ramp'
+  | 'elevator'
+  | 'door'
+  | 'hallway'
+  | 'destination'
+  | 'turn-left'
+  | 'turn-right'
+  | 'continue'
+  | 'crosswalk';
+
 export interface NavStep {
   id: string;
   instruction: string;
   detail: string;
-  nodeType: 'start' | 'ramp' | 'elevator' | 'door' | 'hallway' | 'destination';
+  nodeType: NavNodeType;
   distance: string;
+  distanceMeters?: number;
   isAccessible: boolean;
   audioAnnouncement: string;
+  streetName?: string;
+  maneuver?: string;
+  sequence?: number;
+  location?: [number, number];
+  accessibilityNotes?: string;
 }
+
+export type RouteSourceType = 'osrm-pedestrian' | 'accessible-routing-engine' | 'demo' | 'unknown';
+export type RouteAccessibilityStatus = 'verified_step_free' | 'contains_stairs' | 'accessibility_unknown';
 
 export interface AccessibleRoute {
   id: string;
   destination: string;
+  destinationName?: string;
+  originName?: string;
+  originCoords?: { latitude: number; longitude: number };
+  destinationCoords?: { latitude: number; longitude: number };
   distanceMeters: number;
   durationMinutes: number;
   stepFree: boolean;
+  accessibilityStatus?: RouteAccessibilityStatus;
+  accessibilityNotes?: string;
   steps: NavStep[];
   features: string[];
   tactilePaving: boolean;
   crowdLevel: 'low' | 'moderate' | 'busy';
   lighting: 'bright' | 'adequate';
+  source?: RouteSourceType;
+  geometry?: [number, number][];
+  gpsAvailable?: boolean;
+  disclaimer?: string;
 }
 
 // Safety Center Types
