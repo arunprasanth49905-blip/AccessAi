@@ -1,5 +1,4 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   Camera,
   Scan,
@@ -7,22 +6,18 @@ import {
   ShieldAlert,
   Volume2,
   VolumeX,
-  RefreshCw,
   Video,
   VideoOff,
   SlidersHorizontal,
   HelpCircle,
-  FileText,
   AlertTriangle,
   RotateCcw,
-  CheckCircle2,
   AlertCircle,
   Server,
 } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { AccessibleButton } from '../components/common/AccessibleButton';
 import { ConfidenceIndicator } from '../components/common/ConfidenceIndicator';
-import { SafetyAlert } from '../components/common/SafetyAlert';
 import { ProcessingPipeline, PipelineStep } from '../components/common/ProcessingPipeline';
 import { cameraService } from '../services/cameraService';
 import { visionService } from '../services/visionService';
@@ -34,7 +29,6 @@ import { useAccessibility } from '../context/AccessibilityContext';
 import { CameraScene } from '../types';
 
 export const CameraVisionPage: React.FC = () => {
-  const navigate = useNavigate();
   const { showToast, addAssistanceItem, updateSceneContext } = useAssistant();
   const { settings } = useAccessibility();
 
@@ -60,7 +54,6 @@ export const CameraVisionPage: React.FC = () => {
   const [isQuestionOpen, setIsQuestionOpen] = useState(false);
   const [customQuestion, setCustomQuestion] = useState('');
   const [activeQuestion, setActiveQuestion] = useState<string>('Describe this scene');
-  const [qaAnswer, setQaAnswer] = useState<{ text: string; confidence: 'high' | 'medium' | 'low'; notice?: string } | null>(null);
   const [isSpeaking, setIsSpeaking] = useState(false);
 
   // Attempt real webcam access on mount

@@ -15,7 +15,6 @@ import { HistoryPage } from './pages/HistoryPage';
 import { AccessibilityProfilePage } from './pages/AccessibilityProfilePage';
 import { SettingsPage } from './pages/SettingsPage';
 import { SafetyCenterPage } from './pages/SafetyCenterPage';
-import { DemoModePage } from './pages/DemoModePage';
 
 export const App: React.FC = () => {
   return (
@@ -37,7 +36,6 @@ export const App: React.FC = () => {
               <Route path="/profile" element={<AccessibilityProfilePage />} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="/safety" element={<SafetyCenterPage />} />
-              <Route path="/demo" element={<DemoModePage />} />
             </Route>
 
             {/* Fallback */}

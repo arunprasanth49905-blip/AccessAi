@@ -27,7 +27,12 @@ export type ConversationMessage = z.infer<typeof ConversationMessageSchema>;
 
 export const VoiceChatRequestSchema = z.object({
   text: z.string().min(1, 'Text query cannot be empty'),
-  context: VoiceContextSchema.optional().default({ currentPage: 'voice', currentScene: null }),
+  context: VoiceContextSchema.optional().default({
+    currentPage: 'voice',
+    currentScene: null,
+    lastOcrText: null,
+    activeRoute: null,
+  }),
   accessibilityProfile: AccessibilityProfileSchema.optional().default({
     textSize: 'medium',
     simplifiedMode: false,

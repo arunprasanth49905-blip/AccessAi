@@ -8,14 +8,12 @@ import {
   MessageSquare,
   Sparkles,
   CheckCircle2,
-  Sliders,
   RotateCcw,
 } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { AccessibleButton } from '../components/common/AccessibleButton';
 import { useAccessibility } from '../context/AccessibilityContext';
 import { useAssistant } from '../context/AssistantContext';
-import { audioFeedback } from '../services/audioFeedbackService';
 import { AccessibilityProfile } from '../types';
 
 export const AccessibilityProfilePage: React.FC = () => {

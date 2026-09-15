@@ -12,7 +12,6 @@ import {
   Clock,
   Shield,
   Settings,
-  Sparkles,
   PhoneCall,
 } from 'lucide-react';
 import { useAssistant } from '../../context/AssistantContext';
@@ -30,7 +29,6 @@ const SECONDARY_TABS = [
   { path: '/history', label: 'Assistance History', icon: Clock, desc: 'Past scans, transcript logs' },
   { path: '/safety', label: 'Safety Center', icon: Shield, desc: 'Confidence levels, trusted contacts' },
   { path: '/settings', label: 'Settings', icon: Settings, desc: 'Voice, text size, contrast' },
-  { path: '/demo', label: 'Demo Scenarios', icon: Sparkles, desc: 'Judge 1-click test suite' },
 ];
 
 export const MobileNavigation: React.FC = () => {

@@ -1,5 +1,5 @@
 // OCR Service - Text extraction, segment recognition, and multi-language translations
-import { OCRSample, LanguageCode } from '../types';
+import { OCRSample } from '../types';
 
 export const OCR_SAMPLES: OCRSample[] = [
   {

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Wifi, WifiOff, AlertCircle, RefreshCw, CheckCircle2, ChevronDown, Server, Cpu, Navigation, Eye, FileText } from 'lucide-react';
+import { Wifi, WifiOff, AlertCircle, RefreshCw, ChevronDown, Server, Cpu, Navigation, FileText } from 'lucide-react';
 import { useAssistant } from '../../context/AssistantContext';
 
 export const StatusIndicator: React.FC = () => {
@@ -85,7 +85,7 @@ export const StatusIndicator: React.FC = () => {
                   Backend API:
                 </span>
                 <span className={`font-bold ${connectionStatus !== 'offline' ? 'text-emerald-600' : 'text-rose-600'}`}>
-                  {connectionStatus !== 'offline' ? 'Online (8000)' : 'Unreachable'}
+                  {connectionStatus !== 'offline' ? 'Online' : 'Unreachable'}
                 </span>
               </div>
 

@@ -1,0 +1,12 @@
+{
+  "name": "AccessAI",
+  "description": "An AI accessibility companion that helps you see, hear, understand, and navigate the world around you.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

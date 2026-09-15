@@ -10,7 +10,6 @@ import {
   UserCheck,
   Shield,
   Settings,
-  Sparkles,
   PhoneCall,
   Eye,
 } from 'lucide-react';
@@ -27,7 +26,6 @@ const NAV_ITEMS = [
   { path: '/profile', label: 'Profile', icon: UserCheck },
   { path: '/safety', label: 'Safety', icon: Shield, badge: 'Protected' },
   { path: '/settings', label: 'Settings', icon: Settings },
-  { path: '/demo', label: 'Demo Mode', icon: Sparkles, highlight: true },
 ];
 
 export const Sidebar: React.FC = () => {

@@ -14,7 +14,7 @@ export class NavigationController {
         res.status(400).json({
           error: 'VALIDATION_ERROR',
           message: 'Invalid navigation route request',
-          details: parseResult.error.errors,
+          details: parseResult.error.issues,
         });
         return;
       }

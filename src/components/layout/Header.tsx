@@ -15,7 +15,6 @@ const ROUTE_TITLES: Record<string, { title: string; subtitle: string }> = {
   '/profile': { title: 'Accessibility Profile', subtitle: 'Personalize vision, mobility, and speech assistance' },
   '/settings': { title: 'Settings', subtitle: 'Application preferences and language' },
   '/safety': { title: 'Safety Center', subtitle: 'Confidence levels and emergency contacts' },
-  '/demo': { title: 'Hackathon Demo Suite', subtitle: 'One-click scenarios for judges' },
 };
 
 export const Header: React.FC = () => {

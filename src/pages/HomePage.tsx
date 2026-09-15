@@ -8,7 +8,6 @@ import {
   ArrowRight,
   Clock,
   Sparkles,
-  Play,
   Volume2,
   ChevronRight,
   ShieldAlert,
@@ -242,50 +241,61 @@ export const HomePage: React.FC = () => {
         </div>
 
         <div className="space-y-3">
-          {recentAssistance.slice(0, 4).map((item) => (
-            <div
-              key={item.id}
-              onClick={() => navigate(item.actionUrl)}
-              className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-brand-400 dark:hover:border-brand-600 shadow-sm hover:shadow transition-all cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-4"
-            >
-              <div className="flex items-start gap-3.5">
-                <div className="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center shrink-0 text-brand-600 dark:text-brand-400">
-                  {item.type === 'scene' && <Eye className="w-5 h-5" />}
-                  {item.type === 'ocr' && <FileText className="w-5 h-5" />}
-                  {item.type === 'safety' && <ShieldAlert className="w-5 h-5 text-amber-500" />}
-                  {item.type === 'navigation' && <Compass className="w-5 h-5 text-amber-500" />}
-                </div>
-
-                <div className="space-y-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-bold text-base text-slate-900 dark:text-slate-100">{item.title}</span>
-                    <span className="text-xs text-slate-400 dark:text-slate-500">• {item.relativeTime}</span>
-                    {item.confidence && (
-                      <ConfidenceIndicator level={item.confidence} showDetails={false} size="sm" />
-                    )}
-                  </div>
-                  <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed line-clamp-2">
-                    {item.summary}
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
-                <button
-                  type="button"
-                  onClick={(e) => handleReplayAssistance(e, item.summary)}
-                  title="Read aloud"
-                  aria-label={`Read aloud: ${item.title}`}
-                  className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition-colors"
-                >
-                  <Volume2 className="w-4 h-4" />
-                </button>
-                <div className="p-2 text-slate-400">
-                  <ChevronRight className="w-5 h-5" />
-                </div>
-              </div>
+          {recentAssistance.length === 0 ? (
+            <div className="p-8 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-center space-y-2">
+              <p className="text-sm font-medium text-slate-600 dark:text-slate-400">
+                No recent activity yet.
+              </p>
+              <p className="text-xs text-slate-500 dark:text-slate-500">
+                Use Camera (SEE), Voice (TALK), or Text Reader (READ) to receive live assistance. Your interactions will appear here.
+              </p>
             </div>
-          ))}
+          ) : (
+            recentAssistance.slice(0, 4).map((item) => (
+              <div
+                key={item.id}
+                onClick={() => navigate(item.actionUrl)}
+                className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-brand-400 dark:hover:border-brand-600 shadow-sm hover:shadow transition-all cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+              >
+                <div className="flex items-start gap-3.5">
+                  <div className="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center shrink-0 text-brand-600 dark:text-brand-400">
+                    {item.type === 'scene' && <Eye className="w-5 h-5" />}
+                    {item.type === 'ocr' && <FileText className="w-5 h-5" />}
+                    {item.type === 'safety' && <ShieldAlert className="w-5 h-5 text-amber-500" />}
+                    {item.type === 'navigation' && <Compass className="w-5 h-5 text-amber-500" />}
+                  </div>
+
+                  <div className="space-y-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-bold text-base text-slate-900 dark:text-slate-100">{item.title}</span>
+                      <span className="text-xs text-slate-400 dark:text-slate-500">• {item.relativeTime}</span>
+                      {item.confidence && (
+                        <ConfidenceIndicator level={item.confidence} showDetails={false} size="sm" />
+                      )}
+                    </div>
+                    <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed line-clamp-2">
+                      {item.summary}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                  <button
+                    type="button"
+                    onClick={(e) => handleReplayAssistance(e, item.summary)}
+                    title="Read aloud"
+                    aria-label={`Read aloud: ${item.title}`}
+                    className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition-colors"
+                  >
+                    <Volume2 className="w-4 h-4" />
+                  </button>
+                  <div className="p-2 text-slate-400">
+                    <ChevronRight className="w-5 h-5" />
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
         </div>
       </section>
     </PageContainer>

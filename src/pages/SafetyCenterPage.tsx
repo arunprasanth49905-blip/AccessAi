@@ -2,12 +2,8 @@ import React, { useState } from 'react';
 import {
   Shield,
   ShieldAlert,
-  ShieldCheck,
   AlertTriangle,
-  AlertCircle,
   PhoneCall,
-  MessageSquare,
-  MapPin,
   CheckCircle2,
   Phone,
   Send,
@@ -18,7 +14,6 @@ import {
 import { PageContainer } from '../components/layout/PageContainer';
 import { AccessibleButton } from '../components/common/AccessibleButton';
 import { ConfidenceIndicator } from '../components/common/ConfidenceIndicator';
-import { SafetyAlert } from '../components/common/SafetyAlert';
 import { useAssistant } from '../context/AssistantContext';
 import { audioFeedback } from '../services/audioFeedbackService';
 import { TrustedContact, SafetyAlertItem } from '../types';
@@ -29,8 +24,8 @@ export const SafetyCenterPage: React.FC = () => {
   const [trustedContact] = useState<TrustedContact>({
     name: 'Maya Sundaram',
     relation: 'Sister & Designated Caregiver',
-    phone: '+1 (555) 349-8821',
-    email: 'maya.sundaram@accessai.demo',
+    phone: '+15553498821',
+    email: 'maya.sundaram@accessai.app',
     isEmergencyAlertRecipient: true,
   });
 
@@ -57,19 +52,37 @@ export const SafetyCenterPage: React.FC = () => {
     },
   ]);
 
-  const handleSimulateCall = () => {
+  const handleCall = () => {
     audioFeedback.playChime();
-    showToast(`Calling ${trustedContact.name}`, 'Simulating hands-free call over speakerphone...', 'info');
+    window.location.href = `tel:${trustedContact.phone}`;
   };
 
-  const handleSimulateMessage = () => {
+  const handleMessage = () => {
     audioFeedback.playChime();
-    showToast(`Message Sent to ${trustedContact.name}`, '"AccessAI status update: I am at Chennai Tech Center Concourse."', 'success');
+    const bodyText = encodeURIComponent('Hello, I am sharing an assistance update from AccessAI.');
+    window.location.href = `sms:${trustedContact.phone}?body=${bodyText}`;
   };
 
-  const handleSimulateLocationShare = () => {
+  const handleLocationShare = () => {
     audioFeedback.playSuccess();
-    showToast('Location Broadcast Active', 'Sharing live telemetry: 13.0827° N, 80.2707° E with Maya Sundaram.', 'success');
+    if ('geolocation' in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const lat = pos.coords.latitude.toFixed(5);
+          const lng = pos.coords.longitude.toFixed(5);
+          const mapUrl = `https://maps.google.com/?q=${lat},${lng}`;
+          if (navigator.clipboard) {
+            navigator.clipboard.writeText(mapUrl);
+          }
+          showToast('Location Copied', `Coordinates: ${lat}, ${lng}. Map link copied to clipboard.`, 'success');
+        },
+        () => {
+          showToast('Location Access Notice', 'Location permission denied or unavailable on this device.', 'warning');
+        }
+      );
+    } else {
+      showToast('Location Unsupported', 'Geolocation is not supported by your browser.', 'warning');
+    }
   };
 
   const handleVerifyAlert = (id: string) => {
@@ -223,33 +236,33 @@ export const SafetyCenterPage: React.FC = () => {
               variant="secondary"
               size="sm"
               icon={<Phone className="w-4 h-4 text-emerald-600" />}
-              onClick={handleSimulateCall}
+              onClick={handleCall}
             >
-              Call
+              Call Contact
             </AccessibleButton>
 
             <AccessibleButton
               variant="secondary"
               size="sm"
               icon={<Send className="w-4 h-4 text-brand-600" />}
-              onClick={handleSimulateMessage}
+              onClick={handleMessage}
             >
-              Message
+              Send SMS
             </AccessibleButton>
 
             <AccessibleButton
               variant="secondary"
               size="sm"
               icon={<Share2 className="w-4 h-4 text-purple-600" />}
-              onClick={handleSimulateLocationShare}
+              onClick={handleLocationShare}
             >
-              Share Location
+              Copy Coordinates
             </AccessibleButton>
           </div>
         </div>
 
         <p className="text-xs text-slate-400">
-          Note: For hackathon demonstration purposes, calls, SMS messages, and location broadcasts are simulated safely.
+          Note: Tapping Call or SMS opens your device's native communication app. Real coordinates are obtained using your device's GPS when permitted.
         </p>
       </div>
 

@@ -10,17 +10,9 @@ import { errorHandler } from './middleware/error.middleware.js';
 export const app = express();
 
 // CORS configuration for the Vite React frontend
-const allowedOrigin = config.FRONTEND_URL;
 app.use(
   cors({
-    origin: (origin, callback) => {
-      // Allow requests with no origin (e.g. mobile apps, curl, server-to-server) or matching origin
-      if (!origin || origin === allowedOrigin || origin.startsWith('http://localhost:')) {
-        callback(null, true);
-      } else {
-        callback(new Error('Not allowed by CORS'));
-      }
-    },
+    origin: true,
     credentials: true,
   })
 );

@@ -10,8 +10,8 @@ export interface AppConfig {
 }
 
 export const config: AppConfig = {
-  PORT: process.env.PORT ? parseInt(process.env.PORT, 10) : 8000,
-  FRONTEND_URL: process.env.FRONTEND_URL || 'http://localhost:5173',
+  PORT: process.env.PORT ? parseInt(process.env.PORT, 10) : 3000,
+  FRONTEND_URL: process.env.FRONTEND_URL || 'http://localhost:3000',
   GEMINI_API_KEY: process.env.GEMINI_API_KEY?.trim() || undefined,
   GEMINI_MODEL: process.env.GEMINI_MODEL?.trim() || 'gemini-2.5-flash',
   isGeminiConfigured(): boolean {

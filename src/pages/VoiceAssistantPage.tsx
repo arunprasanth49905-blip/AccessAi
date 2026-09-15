@@ -33,7 +33,6 @@ export const VoiceAssistantPage: React.FC = () => {
   const [inputText, setInputText] = useState('');
   const [interimTranscript, setInterimTranscript] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [isBackendConnected, setIsBackendConnected] = useState<boolean | null>(null);
   const [isMicAvailable, setIsMicAvailable] = useState(true);
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -45,19 +44,6 @@ export const VoiceAssistantPage: React.FC = () => {
   useEffect(() => {
     scrollToBottom();
   }, [messages, voiceState]);
-
-  // Initial check of backend health
-  useEffect(() => {
-    let mounted = true;
-    apiService.checkHealth().then((healthy) => {
-      if (mounted) {
-        setIsBackendConnected(healthy);
-      }
-    });
-    return () => {
-      mounted = false;
-    };
-  }, []);
 
   // Voice State labels
   const stateLabels: Record<VoiceState, { label: string; sub: string }> = {
@@ -160,10 +146,8 @@ export const VoiceAssistantPage: React.FC = () => {
       aiAnswer = backendResponse.answer;
       confidenceLevel = backendResponse.confidenceLevel;
       safetyWarning = backendResponse.safetyWarning;
-      setIsBackendConnected(true);
     } catch {
       // Backend unavailable or network error: fall back to local grounded engine
-      setIsBackendConnected(false);
       const localResult = await aiAssistantService.processUserQuery(queryText, {
         currentScene: sharedContext.lastSceneContext?.description,
         lastOcrText: sharedContext.lastOcrContext?.text,

@@ -11,7 +11,6 @@ import {
   FileText,
   ShieldAlert,
   Compass,
-  Filter,
 } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { AccessibleButton } from '../components/common/AccessibleButton';
@@ -19,7 +18,6 @@ import { ConfidenceIndicator } from '../components/common/ConfidenceIndicator';
 import { useAssistant } from '../context/AssistantContext';
 import { speechService } from '../services/speechService';
 import { audioFeedback } from '../services/audioFeedbackService';
-import { AssistanceHistoryItem } from '../types';
 
 export const HistoryPage: React.FC = () => {
   const navigate = useNavigate();

@@ -8,10 +8,8 @@ import {
   ShieldCheck,
   Sparkles,
   ArrowRight,
-  CheckCircle2,
   Volume2,
   Layers,
-  HeartHandshake,
   Activity,
 } from 'lucide-react';
 import { AccessibleButton } from '../components/common/AccessibleButton';

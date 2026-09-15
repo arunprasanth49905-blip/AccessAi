@@ -92,7 +92,7 @@ export interface BackendVisionRequest {
 class ApiService {
   private getBaseUrl(): string {
     const envUrl = import.meta.env.VITE_API_BASE_URL;
-    return envUrl && typeof envUrl === 'string' ? envUrl.replace(/\/$/, '') : 'http://localhost:8000';
+    return envUrl && typeof envUrl === 'string' && envUrl.trim() ? envUrl.replace(/\/$/, '') : '';
   }
 
   // Health check to determine if backend is online

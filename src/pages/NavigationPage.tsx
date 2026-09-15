@@ -2,35 +2,27 @@ import React, { useState, useEffect } from 'react';
 import {
   Compass,
   Search,
-  MapPin,
   Volume2,
   VolumeX,
   CheckCircle2,
-  ShieldCheck,
-  Footprints,
-  Clock,
   ArrowRight,
   ArrowLeft,
-  Sparkles,
   SlidersHorizontal,
   Play,
   Pause,
   RotateCcw,
   Square,
-  AlertTriangle,
   Info,
   Layers,
-  ChevronRight,
 } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { AccessibleButton } from '../components/common/AccessibleButton';
-import { ConfidenceIndicator } from '../components/common/ConfidenceIndicator';
-import { navigationService, SUPPORTED_DESTINATIONS, DestinationOption } from '../services/navigationService';
+import { navigationService, DestinationOption } from '../services/navigationService';
 import { speechService } from '../services/speechService';
 import { audioFeedback } from '../services/audioFeedbackService';
 import { useAssistant } from '../context/AssistantContext';
 import { useAccessibility } from '../context/AccessibilityContext';
-import { AccessibleRoute, NavStep } from '../types';
+import { AccessibleRoute } from '../types';
 
 type NavState = 'idle' | 'navigating' | 'paused' | 'completed';
 
@@ -85,7 +77,7 @@ export const NavigationPage: React.FC = () => {
     return () => {
       mounted = false;
     };
-  }, [selectedRouteKey, avoidStairs, preferRamps, preferElevators, avoidCrowds, preferWellLit]);
+  }, [selectedRouteKey, avoidStairs, preferRamps, preferElevators, avoidCrowds, preferWellLit, navState]);
 
   // Sync with Assistant Context whenever active waypoint or destination changes
   useEffect(() => {
